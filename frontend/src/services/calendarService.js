@@ -56,7 +56,7 @@ export const calendarService = {
     try {
       // Use extended timeout for sync-all operations
       const response = await apiClient.post('/calendar/sync-all', {}, {
-        timeout: 90000 // 90 seconds for bulk sync operations
+        timeout: 180000 // 180 seconds (3 minutes) for bulk sync operations
       });
       return handleApiResponse(response);
     } catch (error) {
