@@ -3,7 +3,7 @@ import { sanitizeForJSON, validateJSON } from '../utils/jsonUtils';
 
 // Determine the API base URL based on environment
 
-const API_BASE_URL  = "https://misogi-ai.onrender.com/api"; // Default to local development
+const API_BASE_URL  = "http://localhost:5001/api"; // Default to local development
 
 console.log('🌐 Environment:', window.location.hostname);
 console.log('🌐 API Base URL:', API_BASE_URL);
