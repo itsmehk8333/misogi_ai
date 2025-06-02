@@ -5,6 +5,7 @@ const Regimen = require('../models/Regimen');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const validateRequest = require('../middleware/validation');
+const memoryManager = require('../utils/memoryManager');
 
 const router = express.Router();
 
@@ -20,6 +21,8 @@ router.get('/', auth, [
   query('limit').optional().isInt({ min: 1, max: 100 })
 ], validateRequest, async (req, res) => {
   try {
+    memoryManager.logMemoryUsage('doses query start');
+    
     const { 
       startDate, 
       endDate, 
@@ -28,6 +31,10 @@ router.get('/', auth, [
       page = 1, 
       limit = 20 
     } = req.query;
+    
+    // Apply memory-safe pagination limits
+    const safeLimit = Math.min(parseInt(limit), 100);
+    const safePage = Math.max(parseInt(page), 1);
     
     let query = { user: req.user._id };
     
@@ -48,7 +55,7 @@ router.get('/', auth, [
       query.regimen = regimen;
     }
     
-    const skip = (page - 1) * limit;
+    const skip = (safePage - 1) * safeLimit;
     
     const [doses, total] = await Promise.all([
       DoseLog.find(query)
@@ -56,18 +63,22 @@ router.get('/', auth, [
         .populate('regimen', 'frequency dosage')
         .sort({ scheduledTime: -1 })
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(safeLimit)
+        .lean(),
       DoseLog.countDocuments(query)
     ]);
+    
+    memoryManager.logMemoryUsage('doses query complete');
+    memoryManager.checkMemoryAndGC();
     
     res.json({
       doses,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
+        currentPage: safePage,
+        totalPages: Math.ceil(total / safeLimit),
         totalItems: total,
-        hasNextPage: page * limit < total,
-        hasPrevPage: page > 1
+        hasNextPage: safePage * safeLimit < total,
+        hasPrevPage: safePage > 1
       }
     });
   } catch (error) {
@@ -81,6 +92,8 @@ router.get('/', auth, [
 // @access  Private
 router.get('/today', auth, async (req, res) => {
   try {
+    memoryManager.logMemoryUsage('today doses query start');
+    
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
@@ -94,7 +107,12 @@ router.get('/today', auth, async (req, res) => {
     })
     .populate('medication', 'name genericName category form strength')
     .populate('regimen', 'frequency dosage')
-    .sort({ scheduledTime: 1 });
+    .sort({ scheduledTime: 1 })
+    .limit(50) // Safety limit for today's doses
+    .lean();
+    
+    memoryManager.logMemoryUsage('today doses query complete');
+    memoryManager.checkMemoryAndGC();
     
     res.json({ doses: todayDoses });
   } catch (error) {

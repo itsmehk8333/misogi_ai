@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const memoryManager = require('./utils/memoryManager');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
@@ -16,6 +17,10 @@ const calendarRoutes = require('./routes/calendar');
 const schedulerService = require('./services/schedulerService');
 
 const app = express();
+
+// Initialize memory monitoring
+memoryManager.startMonitoring();
+memoryManager.logMemoryUsage('server startup');
 
 // Security middleware
 app.use(helmet());
@@ -192,6 +197,10 @@ app.use('*', (req, res) => {
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Initialize memory monitoring
+  memoryManager.logMemoryUsage('server startup');
+  memoryManager.startMonitoring();
   
   // Start notification scheduler
   if (process.env.NODE_ENV !== 'test') {

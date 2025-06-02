@@ -5,6 +5,7 @@ const Regimen = require('../models/Regimen');
 const auth = require('../middleware/auth');
 const validateRequest = require('../middleware/validation');
 const pdfService = require('../services/pdfService');
+const memoryManager = require('../utils/memoryManager');
 
 const router = express.Router();
 
@@ -112,18 +113,18 @@ router.get('/adherence', auth, [
     if (end > tomorrow) {
       end = tomorrow;
     }
-    
-    // Get overall stats
+      // Get overall stats with memory monitoring
+    memoryManager.logMemoryUsage('before adherence stats query');
     const overallStats = await DoseLog.getAdherenceStats(req.user._id, start, end);
+    memoryManager.logMemoryUsage('after adherence stats query');
     
-    // Get medication-specific stats
-    const medicationStats = await DoseLog.aggregate([
+    // Get medication-specific stats using memory-safe aggregation
+    const medicationStatsPipeline = [
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
-        }
-      },
+        }      },
       {
         $lookup: {
           from: 'medications',
@@ -164,10 +165,14 @@ router.get('/adherence', auth, [
       {
         $sort: { adherencePercentage: -1 }
       }
-    ]);
+    ];
     
-    // Get daily adherence data for chart
-    const dailyAdherence = await DoseLog.aggregate([
+    const medicationStats = await memoryManager.safeAggregate(DoseLog, medicationStatsPipeline, {
+      maxResults: 100,  // Limit results to prevent memory issues
+      chunkSize: 50
+    });
+      // Get daily adherence data for chart using memory-safe aggregation
+    const dailyAdherencePipeline = [
       {
         $match: {
           user: req.user._id,
@@ -198,10 +203,13 @@ router.get('/adherence', auth, [
       {
         $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 }
       }
-    ]);
+    ];
     
-    // Get most commonly missed medications
-    const missedMedications = await DoseLog.aggregate([
+    const dailyAdherence = await memoryManager.safeAggregate(DoseLog, dailyAdherencePipeline, {
+      maxResults: 365,  // Limit to 1 year of data
+      chunkSize: 30
+    });    // Get most commonly missed medications using memory-safe aggregation
+    const missedMedicationsPipeline = [
       {
         $match: {
           user: req.user._id,
@@ -234,7 +242,15 @@ router.get('/adherence', auth, [
       {
         $limit: 5
       }
-    ]);
+    ];
+    
+    const missedMedications = await memoryManager.safeAggregate(DoseLog, missedMedicationsPipeline, {
+      maxResults: 20,
+      chunkSize: 10
+    });
+    
+    // Force garbage collection after heavy aggregations
+    memoryManager.forceGC();
     
     const report = {
       reportPeriod: {
