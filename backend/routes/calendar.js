@@ -182,116 +182,44 @@ router.post('/sync-regimen/:regimenId', auth, async (req, res) => {
 // @access  Private
 router.post('/sync-all', auth, async (req, res) => {
   try {
-    // First check if user has calendar connected
-    const user = await User.findById(req.user._id);
-    if (!user.googleCalendar?.isConnected) {
-      return res.status(400).json({ message: 'Google Calendar not connected' });
-    }
-
-    // Validate OAuth credentials
-    if (!user.googleCalendar.accessToken) {
-      return res.status(400).json({ message: 'Invalid calendar credentials. Please reconnect.' });
-    }
-
     const regimens = await Regimen.find({
       user: req.user._id,
       isActive: true
     }).populate('medication');
 
-    if (regimens.length === 0) {
-      return res.json({
-        message: 'No active regimens found to sync',
-        totalEvents: 0,
-        results: []
-      });
-    }
-
-    // Set a reasonable timeout for large sync operations
-    const syncTimeout = setTimeout(() => {
-      console.warn(`Calendar sync for user ${req.user._id} taking longer than expected`);
-    }, 25000); // Warn after 25 seconds
-
     let totalEvents = 0;
     const results = [];
 
-    try {
-      // Process regimens with improved error handling and limits
-      for (let i = 0; i < regimens.length; i++) {
-        const regimen = regimens[i];
-        
-        try {
-          console.log(`Syncing regimen ${i + 1}/${regimens.length}: ${regimen.medication.name}`);
-          
-          // Call sync-regimen logic for each regimen with timeout protection
-          const syncResult = await Promise.race([
-            syncSingleRegimen(regimen, req.user._id),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Regimen sync timeout')), 10000)
-            )
-          ]);
-          
-          results.push({
-            regimenId: regimen._id,
-            medicationName: regimen.medication.name,
-            eventsCreated: syncResult.eventsCreated,
-            success: true
-          });
-          totalEvents += syncResult.eventsCreated;
-          
-          // Add small delay between regimens to avoid API rate limits
-          if (i < regimens.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-          
-        } catch (error) {
-          console.error(`Failed to sync regimen ${regimen.medication.name}:`, error.message);
-          results.push({
-            regimenId: regimen._id,
-            medicationName: regimen.medication.name,
-            eventsCreated: 0,
-            success: false,
-            error: error.message
-          });
-        }
+    for (const regimen of regimens) {
+      try {
+        // Call sync-regimen logic for each regimen
+        const syncResult = await syncSingleRegimen(regimen, req.user._id);
+        results.push({
+          regimenId: regimen._id,
+          medicationName: regimen.medication.name,
+          eventsCreated: syncResult.eventsCreated,
+          success: true
+        });
+        totalEvents += syncResult.eventsCreated;
+      } catch (error) {
+        results.push({
+          regimenId: regimen._id,
+          medicationName: regimen.medication.name,
+          eventsCreated: 0,
+          success: false,
+          error: error.message
+        });
       }
-    } finally {
-      clearTimeout(syncTimeout);
     }
 
-    const successCount = results.filter(r => r.success).length;
-    const failureCount = results.filter(r => !r.success).length;
-
-    console.log(`Calendar sync completed for user ${req.user._id}: ${successCount} success, ${failureCount} failed`);
-
     res.json({
-      message: `Sync completed: ${totalEvents} total events created (${successCount}/${regimens.length} regimens synced successfully)`,
+      message: `Sync completed: ${totalEvents} total events created`,
       totalEvents,
-      successCount,
-      failureCount,
       results
     });
   } catch (error) {
     console.error('Sync all error:', error);
-    
-    // Provide more specific error messages
-    if (error.message.includes('invalid_grant')) {
-      return res.status(401).json({ 
-        message: 'Calendar access expired. Please reconnect your Google Calendar.',
-        reconnectRequired: true
-      });
-    }
-    
-    if (error.message.includes('timeout') || error.code === 'ETIMEDOUT') {
-      return res.status(408).json({ 
-        message: 'Calendar sync timed out. Please try again or sync regimens individually.',
-        suggestion: 'Try syncing regimens one at a time from the Settings page.'
-      });
-    }
-    
-    res.status(500).json({ 
-      message: 'Failed to sync regimens to calendar',
-      error: error.message
-    });
+    res.status(500).json({ message: 'Failed to sync regimens to calendar' });
   }
 });
 
@@ -526,88 +454,39 @@ function shouldTakeToday(regimen, date) {
 
 // Helper function to sync a single regimen (for sync-all)
 async function syncSingleRegimen(regimen, userId) {
-  try {
-    const user = await User.findById(userId);
-    if (!user.googleCalendar?.isConnected || !user.googleCalendar.accessToken) {
-      throw new Error('Calendar not connected or invalid credentials');
+  const user = await User.findById(userId);
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials({
+    access_token: user.googleCalendar.accessToken,
+    refresh_token: user.googleCalendar.refreshToken
+  });
+
+  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+  const calendarId = user.googleCalendar.settings?.calendarId || 'primary';
+
+  const events = generateCalendarEvents(regimen, 30);
+  const createdEvents = [];
+
+  for (const event of events) {
+    try {
+      const response = await calendar.events.insert({
+        calendarId,
+        resource: event
+      });
+      createdEvents.push(response.data.id);
+    } catch (error) {
+      console.error('Failed to create calendar event:', error);
     }
-
-    const oauth2Client = getOAuth2Client();
-    oauth2Client.setCredentials({
-      access_token: user.googleCalendar.accessToken,
-      refresh_token: user.googleCalendar.refreshToken
-    });
-
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    const calendarId = user.googleCalendar.settings?.calendarId || 'primary';
-
-    // Generate events for the next 30 days
-    const events = generateCalendarEvents(regimen, 30);
-    const createdEvents = [];
-    const maxRetries = 3;
-
-    // Limit events to prevent overwhelming the API (max 50 events per regimen)
-    const eventsToCreate = events.slice(0, 50);
-    
-    console.log(`Creating ${eventsToCreate.length} calendar events for ${regimen.medication.name}`);
-
-    for (let i = 0; i < eventsToCreate.length; i++) {
-      const event = eventsToCreate[i];
-      let retryCount = 0;
-      let success = false;
-
-      while (retryCount < maxRetries && !success) {
-        try {
-          const response = await calendar.events.insert({
-            calendarId,
-            resource: event,
-            // Add timeout to prevent hanging
-            timeout: 5000
-          });
-          
-          createdEvents.push(response.data.id);
-          success = true;
-          
-          // Add small delay between events to avoid rate limits
-          if (i < eventsToCreate.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          
-        } catch (error) {
-          retryCount++;
-          console.error(`Failed to create calendar event (attempt ${retryCount}):`, error.message);
-          
-          if (error.code === 403 && error.message.includes('Rate Limit')) {
-            // Rate limit hit, wait longer
-            await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
-          } else if (error.code === 401 || error.message.includes('invalid_grant')) {
-            // Authentication issue, stop trying
-            throw new Error('Calendar authentication expired. Please reconnect.');
-          } else if (retryCount >= maxRetries) {
-            console.error(`Max retries reached for event creation. Skipping.`);
-            break;
-          } else {
-            // Other error, wait and retry
-            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-          }
-        }
-      }
-    }
-
-    // Update regimen with calendar sync info
-    await Regimen.findByIdAndUpdate(regimen._id, {
-      'calendarSync.isEnabled': true,
-      'calendarSync.lastSyncAt': new Date(),
-      'calendarSync.eventIds': createdEvents
-    });
-
-    console.log(`Successfully created ${createdEvents.length}/${eventsToCreate.length} events for ${regimen.medication.name}`);
-    
-    return { eventsCreated: createdEvents.length };
-  } catch (error) {
-    console.error(`Error syncing regimen ${regimen.medication.name}:`, error);
-    throw error;
   }
+
+  // Update regimen with calendar sync info
+  await Regimen.findByIdAndUpdate(regimen._id, {
+    'calendarSync.isEnabled': true,
+    'calendarSync.lastSyncAt': new Date(),
+    'calendarSync.eventIds': createdEvents
+  });
+
+  return { eventsCreated: createdEvents.length };
 }
 
 module.exports = router;

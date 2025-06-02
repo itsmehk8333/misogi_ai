@@ -11,7 +11,7 @@ console.log('🌐 API Base URL:', API_BASE_URL);
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000, // Increased timeout to 60 seconds for calendar sync operations
+  timeout: 30000, // Increased timeout for remote server
   headers: {
     'Content-Type': 'application/json',
   },
