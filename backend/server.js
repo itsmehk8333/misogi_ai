@@ -22,6 +22,8 @@ app.use(helmet());
 
 // CORS configuration - allow multiple origins during development
 const allowedOrigins = [
+  'https://quiet-daffodil-293b8e.netlify.app',
+  'https://quiet-daffodil-293b8e.netlify.app/',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:3002',

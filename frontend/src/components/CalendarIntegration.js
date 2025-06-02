@@ -51,30 +51,19 @@ const CalendarIntegration = () => {
         authUrl,
         'googleCalendarAuth',
         'width=500,height=600,scrollbars=yes,resizable=yes'
-      );      // Listen for the callback
+      );
+
+      // Listen for the callback
       const checkClosed = setInterval(() => {
         if (popup.closed) {
           clearInterval(checkClosed);
           setConnecting(false);
-          // Check if connection was successful and refresh page if needed
-          setTimeout(async () => {
-            try {
-              const status = await calendarService.getConnectionStatus();
-              if (status.isConnected && !isConnected) {
-                // Connection was successful, refresh the page
-                setTimeout(() => {
-                  window.location.reload();
-                }, 1000);
-              } else {
-                // Just update the status normally
-                checkConnectionStatus();
-              }
-            } catch (error) {
-              checkConnectionStatus();
-            }
-          }, 1000);
+          // Check if connection was successful
+          setTimeout(checkConnectionStatus, 1000);
         }
-      }, 1000);// Handle postMessage from popup (if implementing custom callback handling)
+      }, 1000);
+
+      // Handle postMessage from popup (if implementing custom callback handling)
       const handleMessage = (event) => {
         if (event.origin !== window.location.origin) return;
         
@@ -84,11 +73,6 @@ const CalendarIntegration = () => {
           setAvailableCalendars(event.data.calendars || []);
           notificationService.showToast('success', 'Google Calendar connected successfully!');
           checkConnectionStatus();
-          
-          // Automatically refresh the page after successful connection to update UI
-          setTimeout(() => {
-            window.location.reload();
-          }, 1500);
         } else if (event.data.type === 'GOOGLE_CALENDAR_AUTH_ERROR') {
           popup.close();
           notificationService.showToast('error', 'Failed to connect Google Calendar');

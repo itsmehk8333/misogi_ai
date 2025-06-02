@@ -90,11 +90,6 @@ const Settings = React.memo(() => {  const { user, updateUser } = useAuthStore()
           setMessageType('success');
           window.removeEventListener('message', handleMessage);
           checkCalendarConnection();
-          
-          // Automatically refresh the page after successful connection to update UI
-          setTimeout(() => {
-            window.location.reload();
-          }, 1500);
         }
       };
       window.addEventListener('message', handleMessage);

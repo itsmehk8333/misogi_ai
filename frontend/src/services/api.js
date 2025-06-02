@@ -1,11 +1,8 @@
 import axios from 'axios';
 import { sanitizeForJSON, validateJSON } from '../utils/jsonUtils';
 
-// Determine the API base URL based on environment
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
-const API_BASE_URL  = "http://localhost:5001/api"; // Default to local development
-
-console.log('🌐 Environment:', window.location.hostname);
 console.log('🌐 API Base URL:', API_BASE_URL);
 
 // Create axios instance with default config

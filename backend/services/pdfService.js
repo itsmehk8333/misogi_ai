@@ -5,11 +5,9 @@ class PDFService {
   constructor() {
     this.pageMargin = 50;
     this.lineHeight = 20;
-    this.maxDataChunkSize = 100; // Process data in chunks to prevent memory overflow
-    this.maxRecords = 200; // Limit records to prevent memory issues
   }
 
-  // Create a new PDF document with memory-optimized settings
+  // Create a new PDF document with standard settings
   createDocument() {
     return new PDFDocument({
       size: 'A4',
@@ -19,8 +17,7 @@ class PDFService {
         left: this.pageMargin,
         right: this.pageMargin
       },
-      bufferPages: false, // Disable buffering to reduce memory usage
-      autoFirstPage: true,
+      bufferPages: true,
       info: {
         Title: 'Medication Management Report',
         Author: 'MedTracker System',
@@ -84,7 +81,7 @@ class PDFService {
     return doc.y + 10;
   }
 
-  // Memory-efficient table rendering with chunked processing
+  // Add table with headers and data
   addTable(doc, headers, data, yPosition = null) {
     if (yPosition) doc.y = yPosition;
 
@@ -92,113 +89,79 @@ class PDFService {
     const pageWidth = doc.page.width - 2 * this.pageMargin;
     const columnWidth = pageWidth / headers.length;
     
-    // Limit data to prevent memory issues
-    const limitedData = data.slice(0, this.maxRecords);
-    let currentY = doc.y;
-    
     // Check if we need a new page
     if (doc.y > doc.page.height - 150) {
       doc.addPage();
-      currentY = this.pageMargin;
+      doc.y = this.pageMargin;
     }
 
-    // Process data in chunks to prevent memory overflow
-    const chunkSize = Math.min(this.maxDataChunkSize, limitedData.length);
-    let processedCount = 0;
+    // Draw header background
+    doc.rect(this.pageMargin, doc.y - 5, pageWidth, 20)
+       .fillAndStroke('#f3f4f6', '#e5e7eb');
 
-    for (let i = 0; i < limitedData.length; i += chunkSize) {
-      const chunk = limitedData.slice(i, i + chunkSize);
-      
-      // Draw headers for each chunk (or new page)
-      if (i === 0 || currentY <= this.pageMargin + 50) {
-        // Draw header background
-        doc.rect(this.pageMargin, currentY - 5, pageWidth, 20)
+    // Draw headers
+    doc.font('Helvetica-Bold')
+       .fontSize(10)
+       .fillColor('#374151');
+    
+    headers.forEach((header, index) => {
+      const x = this.pageMargin + (index * columnWidth);
+      doc.text(header, x + 5, doc.y, { 
+        width: columnWidth - 10, 
+        align: 'left',
+        lineBreak: false 
+      });
+    });
+
+    let tableY = doc.y + 20;
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9).fillColor('#000000');
+    data.forEach((row, rowIndex) => {
+      // Check if we need a new page
+      if (tableY > doc.page.height - 100) {
+        doc.addPage();
+        tableY = this.pageMargin;
+        
+        // Redraw header background
+        doc.rect(this.pageMargin, tableY - 5, pageWidth, 20)
            .fillAndStroke('#f3f4f6', '#e5e7eb');
-
-        // Draw headers
+        
+        // Redraw headers on new page
         doc.font('Helvetica-Bold')
            .fontSize(10)
            .fillColor('#374151');
-        
         headers.forEach((header, index) => {
           const x = this.pageMargin + (index * columnWidth);
-          doc.text(header, x + 5, currentY, { 
+          doc.text(header, x + 5, tableY, { 
             width: columnWidth - 10, 
             align: 'left',
             lineBreak: false 
           });
         });
-
-        currentY += 20;
+        tableY += 20;
+        doc.font('Helvetica').fontSize(9).fillColor('#000000');
       }
 
-      // Draw data rows for this chunk
-      doc.font('Helvetica').fontSize(9).fillColor('#000000');
-      
-      chunk.forEach((row, rowIndex) => {
-        // Check if we need a new page
-        if (currentY > doc.page.height - 100) {
-          doc.addPage();
-          currentY = this.pageMargin;
-          
-          // Redraw header background
-          doc.rect(this.pageMargin, currentY - 5, pageWidth, 20)
-             .fillAndStroke('#f3f4f6', '#e5e7eb');
-          
-          // Redraw headers on new page
-          doc.font('Helvetica-Bold')
-             .fontSize(10)
-             .fillColor('#374151');
-          headers.forEach((header, index) => {
-            const x = this.pageMargin + (index * columnWidth);
-            doc.text(header, x + 5, currentY, { 
-              width: columnWidth - 10, 
-              align: 'left',
-              lineBreak: false 
-            });
-          });
-          currentY += 20;
-          doc.font('Helvetica').fontSize(9).fillColor('#000000');
-        }
+      // Alternate row background
+      if (rowIndex % 2 === 0) {
+        doc.rect(this.pageMargin, tableY - 2, pageWidth, 16)
+           .fill('#fafafa');
+      }
 
-        // Alternate row background
-        if ((i + rowIndex) % 2 === 0) {
-          doc.rect(this.pageMargin, currentY - 2, pageWidth, 16)
-             .fill('#fafafa');
-        }
-
-        headers.forEach((header, colIndex) => {
-          const x = this.pageMargin + (colIndex * columnWidth);
-          const value = row[header] || '';
-          doc.text(String(value), x + 5, currentY, { 
-            width: columnWidth - 10, 
-            align: 'left',
-            lineBreak: false 
-          });
+      headers.forEach((header, colIndex) => {
+        const x = this.pageMargin + (colIndex * columnWidth);
+        const value = row[header] || '';
+        doc.text(String(value), x + 5, tableY, { 
+          width: columnWidth - 10, 
+          align: 'left',
+          lineBreak: false 
         });
-        currentY += 16;
       });
-      
-      processedCount += chunk.length;
-      
-      // Allow garbage collection between chunks
-      if (i > 0 && i % (chunkSize * 3) === 0) {
-        if (global.gc) {
-          global.gc();
-        }
-      }
-    }
+      tableY += 16;
+    });
 
-    // Add note if data was truncated
-    if (data.length > this.maxRecords) {
-      doc.fontSize(10)
-         .fillColor('#666666')
-         .text(`Note: Report limited to ${this.maxRecords} records. Total records: ${data.length}`, 
-               this.pageMargin, currentY + 10);
-      currentY += 25;
-    }
-
-    doc.y = currentY + 10;
+    doc.y = tableY + 10;
     return doc.y;
   }
 
@@ -252,47 +215,23 @@ class PDFService {
 
   // Generate adherence report PDF
   async generateAdherenceReport(data) {
-    try {
-      const doc = this.createDocument();
-      
-      // Validate required data
-      if (!data || !data.reportPeriod) {
-        throw new Error('Invalid report data: missing reportPeriod');
-      }
+    const doc = this.createDocument();
+    
+    // Header
+    let yPos = this.addHeader(doc, 'Medication Adherence Report', 
+      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
 
-      // Safely format dates with error handling
-      let periodText;
-      try {
-        const startDate = data.reportPeriod.startDate ? new Date(data.reportPeriod.startDate) : new Date();
-        const endDate = data.reportPeriod.endDate ? new Date(data.reportPeriod.endDate) : new Date();
-        periodText = `Period: ${format(startDate, 'MMM dd, yyyy')} - ${format(endDate, 'MMM dd, yyyy')}`;
-      } catch (dateError) {
-        console.warn('Date formatting error in PDF generation:', dateError);
-        periodText = 'Period: Current Report';
-      }
-      
-      // Header
-      let yPos = this.addHeader(doc, 'Medication Adherence Report', periodText);
-
-      // Overall statistics with enhanced validation
-      yPos = this.addSectionHeader(doc, 'Summary Statistics', yPos);
-      
-      // Ensure numeric values are properly handled
-      const overallAdherence = typeof data.overallAdherence === 'number' ? data.overallAdherence : 0;
-      const totalDoses = typeof data.totalDoses === 'number' ? data.totalDoses : 0;
-      const takenDoses = typeof data.takenDoses === 'number' ? data.takenDoses : 0;
-      const missedDoses = typeof data.missedDoses === 'number' ? data.missedDoses : 0;
-      const currentStreak = typeof data.currentStreak === 'number' ? data.currentStreak : 0;
-      const bestStreak = typeof data.bestStreak === 'number' ? data.bestStreak : 0;
-      
-      const stats = {
-        'Overall Adherence': `${overallAdherence.toFixed(1)}%`,
-        'Total Doses Scheduled': totalDoses.toString(),
-        'Doses Taken': takenDoses.toString(),
-        'Doses Missed': missedDoses.toString(),
-        'Current Streak': `${currentStreak} days`,
-        'Best Streak': `${bestStreak} days`
-      };
+    // Overall statistics
+    yPos = this.addSectionHeader(doc, 'Summary Statistics', yPos);
+    
+    const stats = {
+      'Overall Adherence': `${data.overallAdherence?.toFixed(1) || 0}%`,
+      'Total Doses Scheduled': data.totalDoses || 0,
+      'Doses Taken': data.takenDoses || 0,
+      'Doses Missed': data.missedDoses || 0,
+      'Current Streak': `${data.currentStreak || 0} days`,
+      'Best Streak': `${data.bestStreak || 0} days`
+    };
 
     yPos = this.addKeyValueSection(doc, stats, yPos);
 
@@ -329,11 +268,13 @@ class PDFService {
     }
 
     // Finalize the document and return buffer
-    return this.finalizePDF(doc);
-    } catch (error) {
-      console.error('Error generating adherence PDF report:', error);
-      throw new Error(`PDF generation failed: ${error.message}`);
-    }
+    doc.end();
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+    });
   }
 
   // Generate dose logs report PDF
@@ -364,7 +305,13 @@ class PDFService {
     }
 
     // Finalize the document and return buffer
-    return this.finalizePDF(doc);
+    doc.end();
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+    });
   }
 
   // Generate medication list report PDF
@@ -417,93 +364,93 @@ class PDFService {
          .text('No medications found.', this.pageMargin, yPos);
     }
 
-    return this.finalizePDF(doc);
+    return doc;
   }
 
   // Generate missed doses report PDF
   async generateMissedDosesReport(data) {
-    try {
-      const doc = this.createDocument();
+    const doc = this.createDocument();
+    
+    // Header
+    let yPos = this.addHeader(doc, 'Missed Doses Report',
+      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
+
+    // Summary statistics
+    if (data.summary) {
+      yPos = this.addSectionHeader(doc, 'Summary', yPos);
       
-      // Validate data
-      if (!data) {
-        throw new Error('Invalid report data provided');
-      }
+      const summary = {
+        'Total Missed Doses': data.summary.totalMissed || 0,
+        'Most Missed Medication': data.summary.mostMissedMedication || 'N/A',
+        'Average Missed Per Day': data.summary.avgMissedPerDay?.toFixed(1) || '0.0',
+        'Missed Dose Rate': `${data.summary.missedRate?.toFixed(1) || 0}%`
+      };
 
-      // Safely format dates with fallback
-      let periodText = 'Missed Doses Report';
-      if (data.reportPeriod && data.reportPeriod.startDate && data.reportPeriod.endDate) {
-        try {
-          const startDate = new Date(data.reportPeriod.startDate);
-          const endDate = new Date(data.reportPeriod.endDate);
-          periodText = `Period: ${format(startDate, 'MMM dd, yyyy')} - ${format(endDate, 'MMM dd, yyyy')}`;
-        } catch (dateError) {
-          console.warn('Date formatting error in missed doses PDF:', dateError);
-        }
-      }
-      
-      // Header
-      let yPos = this.addHeader(doc, 'Missed Doses Report', periodText);
-
-      // Summary statistics with validation
-      if (data.summary && typeof data.summary === 'object') {
-        yPos = this.addSectionHeader(doc, 'Summary', yPos);
-        
-        const summary = {
-          'Total Missed Doses': (data.summary.totalMissed || 0).toString(),
-          'Most Missed Medication': data.summary.mostMissedMedication || 'N/A',
-          'Average Missed Per Day': (data.summary.avgMissedPerDay || 0).toFixed(1),
-          'Missed Dose Rate': `${(data.summary.missedRate || 0).toFixed(1)}%`
-        };
-
-        yPos = this.addKeyValueSection(doc, summary, yPos);
-      }
-
-      // Missed doses table with enhanced validation
-      if (data.missedDoses && Array.isArray(data.missedDoses) && data.missedDoses.length > 0) {
-        yPos = this.addSectionHeader(doc, 'Missed Dose Details', yPos + 20);
-        
-        const headers = ['Date', 'Medication', 'Scheduled Time', 'Reason', 'Impact'];
-        const missedData = data.missedDoses.map(dose => {
-          // Validate dose object
-          if (!dose || !dose.scheduledTime) {
-            console.warn('Invalid dose data in missed doses report:', dose);
-            return null;
-          }
-
-          try {
-            return {
-              'Date': format(new Date(dose.scheduledTime), 'MMM dd, yyyy'),
-              'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
-              'Scheduled Time': format(new Date(dose.scheduledTime), 'HH:mm'),
-              'Reason': (dose.notes || 'Not specified').substring(0, 25) + (dose.notes?.length > 25 ? '...' : ''),
-              'Impact': dose.criticality || 'Low'
-            };
-          } catch (error) {
-            console.warn('Error processing dose data:', error);
-            return null;
-          }
-        }).filter(Boolean); // Remove null entries
-
-        if (missedData.length > 0) {
-          this.addTable(doc, headers, missedData, yPos);
-        } else {
-          doc.fontSize(12)
-             .text('No valid missed dose data available.', this.pageMargin, yPos);
-        }
-      } else {
-        doc.fontSize(12)
-           .text('No missed doses found for the selected period.', this.pageMargin, yPos);
-      }
-
-      return this.finalizePDF(doc);
-    } catch (error) {
-      console.error('Error generating missed doses PDF report:', error);
-      throw new Error(`Missed doses PDF generation failed: ${error.message}`);
+      yPos = this.addKeyValueSection(doc, summary, yPos);
     }
+
+    // Missed doses table
+    if (data.missedDoses && data.missedDoses.length > 0) {
+      yPos = this.addSectionHeader(doc, 'Missed Dose Details', yPos + 20);
+      
+      const headers = ['Date', 'Medication', 'Scheduled Time', 'Reason', 'Impact'];
+      const missedData = data.missedDoses.map(dose => ({
+        'Date': format(new Date(dose.scheduledTime), 'MMM dd, yyyy'),
+        'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
+        'Scheduled Time': format(new Date(dose.scheduledTime), 'HH:mm'),
+        'Reason': (dose.notes || 'Not specified').substring(0, 25) + (dose.notes?.length > 25 ? '...' : ''),
+        'Impact': dose.criticality || 'Low'
+      }));
+
+      this.addTable(doc, headers, missedData, yPos);
+    } else {
+      doc.fontSize(12)
+         .text('No missed doses found for the selected period.', this.pageMargin, yPos);
+    }
+
+    return doc;
   }
 
+  // Generate calendar data report PDF
+  async generateCalendarDataReport(data) {
+    const doc = this.createDocument();
+    
+    // Header
+    let yPos = this.addHeader(doc, 'Calendar & Schedule Report',
+      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
 
+    // Daily schedule summary
+    if (data.dailySchedule && data.dailySchedule.length > 0) {
+      yPos = this.addSectionHeader(doc, 'Daily Schedule Summary', yPos);
+      
+      const headers = ['Date', 'Scheduled Doses', 'Completed', 'Missed', 'Adherence %'];
+      const scheduleData = data.dailySchedule.map(day => ({
+        'Date': format(new Date(day.date), 'MMM dd, yyyy'),
+        'Scheduled Doses': day.scheduledDoses || 0,
+        'Completed': day.completedDoses || 0,
+        'Missed': day.missedDoses || 0,
+        'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
+      }));
+
+      this.addTable(doc, headers, scheduleData, yPos);
+    }
+
+    // Time-based patterns
+    if (data.timePatterns) {
+      yPos = this.addSectionHeader(doc, 'Adherence by Time of Day', doc.y + 20);
+      
+      const timeStats = {
+        'Morning (6AM-12PM)': `${data.timePatterns.morning?.toFixed(1) || 0}%`,
+        'Afternoon (12PM-6PM)': `${data.timePatterns.afternoon?.toFixed(1) || 0}%`,
+        'Evening (6PM-10PM)': `${data.timePatterns.evening?.toFixed(1) || 0}%`,
+        'Night (10PM-6AM)': `${data.timePatterns.night?.toFixed(1) || 0}%`
+      };
+
+      this.addKeyValueSection(doc, timeStats, doc.y);
+    }
+
+    return doc;
+  }
 
   // Generate dose logs report PDF
   async generateDoseLogsReport(data) {
@@ -573,111 +520,76 @@ class PDFService {
     return this.finalizePDF(doc);
   }
 
+  // Generate missed doses report PDF
+  async generateMissedDosesReport(data) {
+    const doc = this.createDocument();
+    
+    let yPos = this.addHeader(doc, 'Missed Doses Report');
 
+    if (data.missedDoses && data.missedDoses.length > 0) {
+      yPos = this.addSectionHeader(doc, 'Missed Dose History', yPos);
+      
+      const headers = ['Date', 'Medication', 'Scheduled Time', 'Reason'];
+      const tableData = data.missedDoses.slice(0, 30).map(dose => ({
+        'Date': format(new Date(dose.scheduledTime), 'MM/dd/yyyy'),
+        'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
+        'Scheduled Time': format(new Date(dose.scheduledTime), 'HH:mm'),
+        'Reason': (dose.notes || 'Not specified').substring(0, 25)
+      }));
+
+      this.addTable(doc, headers, tableData, yPos);
+    } else {
+      doc.font('Helvetica').fontSize(12)
+         .text('No missed doses found for the selected period.', this.pageMargin, yPos + 20);
+    }
+
+    return this.finalizePDF(doc);
+  }
 
   // Generate calendar data report PDF
   async generateCalendarReport(data) {
-    try {
-      const doc = this.createDocument();
+    const doc = this.createDocument();
+    
+    let yPos = this.addHeader(doc, 'Calendar Adherence Data');
+
+    if (data && data.length > 0) {
+      yPos = this.addSectionHeader(doc, 'Daily Adherence Summary', yPos);
       
-      let yPos = this.addHeader(doc, 'Calendar Adherence Data');
+      const headers = ['Date', 'Total Doses', 'Taken', 'Adherence %'];
+      const tableData = data.slice(0, 40).map(day => ({
+        'Date': format(new Date(day.date), 'MM/dd/yyyy'),
+        'Total Doses': day.totalDoses,
+        'Taken': day.takenDoses,
+        'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
+      }));
 
-      if (data && Array.isArray(data) && data.length > 0) {
-        yPos = this.addSectionHeader(doc, 'Daily Adherence Summary', yPos);
-        
-        const headers = ['Date', 'Total Doses', 'Taken', 'Adherence %'];
-        const tableData = data.slice(0, 40).map(day => {
-          // Validate day object
-          if (!day || !day.date) {
-            console.warn('Invalid calendar day data:', day);
-            return null;
-          }
-
-          try {
-            return {
-              'Date': format(new Date(day.date), 'MM/dd/yyyy'),
-              'Total Doses': (day.totalDoses || 0).toString(),
-              'Taken': (day.takenDoses || 0).toString(),
-              'Adherence %': `${(day.adherenceRate || 0).toFixed(1)}%`
-            };
-          } catch (error) {
-            console.warn('Error processing calendar day:', error);
-            return null;
-          }
-        }).filter(Boolean); // Remove null entries
-
-        if (tableData.length > 0) {
-          this.addTable(doc, headers, tableData, yPos);
-        } else {
-          doc.font('Helvetica').fontSize(12)
-             .text('No valid calendar data available.', this.pageMargin, yPos + 20);
-        }
-      } else {
-        doc.font('Helvetica').fontSize(12)
-           .text('No calendar data found for the selected period.', this.pageMargin, yPos + 20);
-      }
-
-      return this.finalizePDF(doc);
-    } catch (error) {
-      console.error('Error generating calendar PDF report:', error);
-      throw new Error(`Calendar PDF generation failed: ${error.message}`);
+      this.addTable(doc, headers, tableData, yPos);
+    } else {
+      doc.font('Helvetica').fontSize(12)
+         .text('No calendar data found for the selected period.', this.pageMargin, yPos + 20);
     }
+
+    return this.finalizePDF(doc);
   }
 
-  // Memory-optimized PDF finalization using streams
+  // Finalize PDF and return buffer
   async finalizePDF(doc) {
+    // Add page numbers
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i++) {
+      doc.switchToPage(i);
+      doc.font('Helvetica').fontSize(8)
+         .text(`Page ${i + 1} of ${pages.count}`, 
+               doc.page.width - 100, doc.page.height - 30, 
+               { align: 'center' });
+    }
+
     return new Promise((resolve, reject) => {
-      try {
-        const buffers = [];
-        let totalSize = 0;
-        
-        // Set up streaming with memory monitoring
-        doc.on('data', (chunk) => {
-          buffers.push(chunk);
-          totalSize += chunk.length;
-          
-          // Monitor memory usage and warn if getting too large
-          if (totalSize > 50 * 1024 * 1024) { // 50MB warning
-            console.warn('PDF size exceeding 50MB, consider reducing data set');
-          }
-        });
-        
-        doc.on('end', () => {
-          try {
-            const pdfBuffer = Buffer.concat(buffers);
-            
-            // Clear buffers array to free memory immediately
-            buffers.length = 0;
-            
-            // Force garbage collection if available
-            if (global.gc) {
-              global.gc();
-            }
-            
-            resolve(pdfBuffer);
-          } catch (concatError) {
-            console.error('Error concatenating PDF buffers:', concatError);
-            reject(new Error('Failed to finalize PDF due to memory constraints'));
-          }
-        });
-        
-        doc.on('error', (error) => {
-          console.error('PDF generation error:', error);
-          reject(error);
-        });
-
-        // Add simplified page numbering without buffering pages
-        // Note: We skip complex page numbering to avoid memory overhead from bufferedPageRange()
-        doc.font('Helvetica').fontSize(8)
-           .text('Generated by MedTracker System', 
-                 doc.page.width - 200, doc.page.height - 30, 
-                 { align: 'left' });
-
-        doc.end();
-      } catch (error) {
-        console.error('Error in finalizePDF:', error);
-        reject(error);
-      }
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      doc.end();
     });
   }
 }
