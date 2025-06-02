@@ -133,34 +133,12 @@ const Settings = React.memo(() => {  const { user, updateUser } = useAuthStore()
   const handleSyncAllMedications = useCallback(async () => {
     try {
       setCalendarLoading(true);
-      setMessage('📅 Starting medication sync to Google Calendar... This may take a few minutes for many medications.');
-      setMessageType('info');
-      
-      // Add a progress indicator
-      let progressTimeout = setTimeout(() => {
-        setMessage('📅 Sync in progress... Please wait, this may take up to 3 minutes for many medications.');
-      }, 30000); // Update after 30 seconds
-      
-      const result = await calendarService.syncAllRegimens();
-      
-      clearTimeout(progressTimeout);
-      
-      // Show detailed results
-      if (result.successCount && result.failureCount) {
-        setMessage(`📅 Sync completed! ${result.successCount} medications synced successfully, ${result.failureCount} failed. Total events: ${result.totalEvents || 0}`);
-      } else {
-        setMessage(`📅 All medications synced to Google Calendar successfully! Total events created: ${result.totalEvents || 0}`);
-      }
+      await calendarService.syncAllMedications();
+      setMessage('📅 All medications synced to Google Calendar successfully!');
       setMessageType('success');
     } catch (error) {
       console.error('Calendar sync error:', error);
-      
-      let errorMessage = '❌ Failed to sync medications: ' + error.message;
-      if (error.suggestion) {
-        errorMessage += '\n\n💡 ' + error.suggestion;
-      }
-      
-      setMessage(errorMessage);
+      setMessage('❌ Failed to sync medications: ' + error.message);
       setMessageType('error');
     } finally {
       setCalendarLoading(false);
@@ -622,16 +600,7 @@ const Settings = React.memo(() => {  const { user, updateUser } = useAuthStore()
                       disabled={calendarLoading || !calendarSettings.syncEnabled}
                       className="text-xs flex items-center gap-1"
                     >
-                      {calendarLoading ? (
-                        <>
-                          <span className="animate-spin inline-block w-3 h-3 border border-gray-300 border-t-blue-600 rounded-full"></span>
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          📅 Sync All Medications
-                        </>
-                      )}
+                      📅 Sync All Medications
                     </Button>
                     <Button
                       size="sm"

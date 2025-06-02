@@ -204,73 +204,54 @@ router.post('/sync-all', auth, async (req, res) => {
         totalEvents: 0,
         results: []
       });
-    }    // Set a reasonable timeout for large sync operations
+    }
+
+    // Set a reasonable timeout for large sync operations
     const syncTimeout = setTimeout(() => {
       console.warn(`Calendar sync for user ${req.user._id} taking longer than expected`);
-    }, 45000); // Warn after 45 seconds
+    }, 25000); // Warn after 25 seconds
 
     let totalEvents = 0;
     const results = [];
 
     try {
       // Process regimens with improved error handling and limits
-      console.log(`Starting sync for ${regimens.length} regimens...`);
-      
-      // Chunk regimens into smaller batches to avoid overwhelming the API
-      const chunkSize = 3; // Process 3 regimens at a time
-      const chunks = [];
-      for (let i = 0; i < regimens.length; i += chunkSize) {
-        chunks.push(regimens.slice(i, i + chunkSize));
-      }
-      
-      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-        const chunk = chunks[chunkIndex];
-        console.log(`Processing chunk ${chunkIndex + 1}/${chunks.length} with ${chunk.length} regimens...`);
+      for (let i = 0; i < regimens.length; i++) {
+        const regimen = regimens[i];
         
-        // Process each regimen in the chunk
-        for (let i = 0; i < chunk.length; i++) {
-          const regimen = chunk[i];
+        try {
+          console.log(`Syncing regimen ${i + 1}/${regimens.length}: ${regimen.medication.name}`);
           
-          try {
-            console.log(`Syncing regimen ${(chunkIndex * chunkSize) + i + 1}/${regimens.length}: ${regimen.medication.name}`);
-            
-            // Call sync-regimen logic for each regimen with timeout protection
-            const syncResult = await Promise.race([
-              syncSingleRegimen(regimen, req.user._id),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Regimen sync timeout')), 15000) // 15 second timeout per regimen
-              )
-            ]);
-            
-            results.push({
-              regimenId: regimen._id,
-              medicationName: regimen.medication.name,
-              eventsCreated: syncResult.eventsCreated,
-              success: true
-            });
-            totalEvents += syncResult.eventsCreated;
-            
-          } catch (error) {
-            console.error(`Failed to sync regimen ${regimen.medication.name}:`, error.message);
-            results.push({
-              regimenId: regimen._id,
-              medicationName: regimen.medication.name,
-              eventsCreated: 0,
-              success: false,
-              error: error.message
-            });
+          // Call sync-regimen logic for each regimen with timeout protection
+          const syncResult = await Promise.race([
+            syncSingleRegimen(regimen, req.user._id),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Regimen sync timeout')), 10000)
+            )
+          ]);
+          
+          results.push({
+            regimenId: regimen._id,
+            medicationName: regimen.medication.name,
+            eventsCreated: syncResult.eventsCreated,
+            success: true
+          });
+          totalEvents += syncResult.eventsCreated;
+          
+          // Add small delay between regimens to avoid API rate limits
+          if (i < regimens.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
           
-          // Add small delay between regimens within chunk to avoid API rate limits
-          if (i < chunk.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
-        }
-        
-        // Add delay between chunks to avoid overwhelming the API
-        if (chunkIndex < chunks.length - 1) {
-          console.log(`Completed chunk ${chunkIndex + 1}/${chunks.length}, waiting before next chunk...`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`Failed to sync regimen ${regimen.medication.name}:`, error.message);
+          results.push({
+            regimenId: regimen._id,
+            medicationName: regimen.medication.name,
+            eventsCreated: 0,
+            success: false,
+            error: error.message
+          });
         }
       }
     } finally {
@@ -558,13 +539,15 @@ async function syncSingleRegimen(regimen, userId) {
     });
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    const calendarId = user.googleCalendar.settings?.calendarId || 'primary';    // Generate events for the next 14 days (reduced from 30 for faster sync)
-    const events = generateCalendarEvents(regimen, 14);
+    const calendarId = user.googleCalendar.settings?.calendarId || 'primary';
+
+    // Generate events for the next 30 days
+    const events = generateCalendarEvents(regimen, 30);
     const createdEvents = [];
     const maxRetries = 3;
 
-    // Limit events to prevent overwhelming the API (max 30 events per regimen)
-    const eventsToCreate = events.slice(0, 30);
+    // Limit events to prevent overwhelming the API (max 50 events per regimen)
+    const eventsToCreate = events.slice(0, 50);
     
     console.log(`Creating ${eventsToCreate.length} calendar events for ${regimen.medication.name}`);
 
