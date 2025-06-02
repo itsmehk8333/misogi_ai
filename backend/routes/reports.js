@@ -116,16 +116,13 @@ router.get('/adherence', auth, [
     // Get overall stats
     const overallStats = await DoseLog.getAdherenceStats(req.user._id, start, end);
     
-    // Get medication-specific stats (limit to prevent memory issues)
+    // Get medication-specific stats
     const medicationStats = await DoseLog.aggregate([
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
         }
-      },
-      {
-        $limit: 5000 // Limit to prevent memory overflow
       },
       {
         $lookup: {
@@ -166,22 +163,16 @@ router.get('/adherence', auth, [
       },
       {
         $sort: { adherencePercentage: -1 }
-      },
-      {
-        $limit: 50 // Limit medications shown in report
       }
     ]);
     
-    // Get daily adherence data for chart (limit to prevent memory issues)
+    // Get daily adherence data for chart
     const dailyAdherence = await DoseLog.aggregate([
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
         }
-      },
-      {
-        $limit: 3000 // Limit to prevent memory overflow
       },
       {
         $group: {
@@ -206,9 +197,6 @@ router.get('/adherence', auth, [
       },
       {
         $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 }
-      },
-      {
-        $limit: 365 // Limit to one year of daily data max
       }
     ]);
     

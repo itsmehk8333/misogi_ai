@@ -5,11 +5,9 @@ class PDFService {
   constructor() {
     this.pageMargin = 50;
     this.lineHeight = 20;
-    this.maxDataChunkSize = 100; // Process data in chunks to prevent memory overflow
-    this.maxRecords = 200; // Limit records to prevent memory issues
   }
 
-  // Create a new PDF document with memory-optimized settings
+  // Create a new PDF document with standard settings
   createDocument() {
     return new PDFDocument({
       size: 'A4',
@@ -19,8 +17,7 @@ class PDFService {
         left: this.pageMargin,
         right: this.pageMargin
       },
-      bufferPages: false, // Disable buffering to reduce memory usage
-      autoFirstPage: true,
+      bufferPages: true,
       info: {
         Title: 'Medication Management Report',
         Author: 'MedTracker System',
@@ -84,7 +81,7 @@ class PDFService {
     return doc.y + 10;
   }
 
-  // Memory-efficient table rendering with chunked processing
+  // Add table with headers and data
   addTable(doc, headers, data, yPosition = null) {
     if (yPosition) doc.y = yPosition;
 
@@ -92,113 +89,79 @@ class PDFService {
     const pageWidth = doc.page.width - 2 * this.pageMargin;
     const columnWidth = pageWidth / headers.length;
     
-    // Limit data to prevent memory issues
-    const limitedData = data.slice(0, this.maxRecords);
-    let currentY = doc.y;
-    
     // Check if we need a new page
     if (doc.y > doc.page.height - 150) {
       doc.addPage();
-      currentY = this.pageMargin;
+      doc.y = this.pageMargin;
     }
 
-    // Process data in chunks to prevent memory overflow
-    const chunkSize = Math.min(this.maxDataChunkSize, limitedData.length);
-    let processedCount = 0;
+    // Draw header background
+    doc.rect(this.pageMargin, doc.y - 5, pageWidth, 20)
+       .fillAndStroke('#f3f4f6', '#e5e7eb');
 
-    for (let i = 0; i < limitedData.length; i += chunkSize) {
-      const chunk = limitedData.slice(i, i + chunkSize);
-      
-      // Draw headers for each chunk (or new page)
-      if (i === 0 || currentY <= this.pageMargin + 50) {
-        // Draw header background
-        doc.rect(this.pageMargin, currentY - 5, pageWidth, 20)
+    // Draw headers
+    doc.font('Helvetica-Bold')
+       .fontSize(10)
+       .fillColor('#374151');
+    
+    headers.forEach((header, index) => {
+      const x = this.pageMargin + (index * columnWidth);
+      doc.text(header, x + 5, doc.y, { 
+        width: columnWidth - 10, 
+        align: 'left',
+        lineBreak: false 
+      });
+    });
+
+    let tableY = doc.y + 20;
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9).fillColor('#000000');
+    data.forEach((row, rowIndex) => {
+      // Check if we need a new page
+      if (tableY > doc.page.height - 100) {
+        doc.addPage();
+        tableY = this.pageMargin;
+        
+        // Redraw header background
+        doc.rect(this.pageMargin, tableY - 5, pageWidth, 20)
            .fillAndStroke('#f3f4f6', '#e5e7eb');
-
-        // Draw headers
+        
+        // Redraw headers on new page
         doc.font('Helvetica-Bold')
            .fontSize(10)
            .fillColor('#374151');
-        
         headers.forEach((header, index) => {
           const x = this.pageMargin + (index * columnWidth);
-          doc.text(header, x + 5, currentY, { 
+          doc.text(header, x + 5, tableY, { 
             width: columnWidth - 10, 
             align: 'left',
             lineBreak: false 
           });
         });
-
-        currentY += 20;
+        tableY += 20;
+        doc.font('Helvetica').fontSize(9).fillColor('#000000');
       }
 
-      // Draw data rows for this chunk
-      doc.font('Helvetica').fontSize(9).fillColor('#000000');
-      
-      chunk.forEach((row, rowIndex) => {
-        // Check if we need a new page
-        if (currentY > doc.page.height - 100) {
-          doc.addPage();
-          currentY = this.pageMargin;
-          
-          // Redraw header background
-          doc.rect(this.pageMargin, currentY - 5, pageWidth, 20)
-             .fillAndStroke('#f3f4f6', '#e5e7eb');
-          
-          // Redraw headers on new page
-          doc.font('Helvetica-Bold')
-             .fontSize(10)
-             .fillColor('#374151');
-          headers.forEach((header, index) => {
-            const x = this.pageMargin + (index * columnWidth);
-            doc.text(header, x + 5, currentY, { 
-              width: columnWidth - 10, 
-              align: 'left',
-              lineBreak: false 
-            });
-          });
-          currentY += 20;
-          doc.font('Helvetica').fontSize(9).fillColor('#000000');
-        }
+      // Alternate row background
+      if (rowIndex % 2 === 0) {
+        doc.rect(this.pageMargin, tableY - 2, pageWidth, 16)
+           .fill('#fafafa');
+      }
 
-        // Alternate row background
-        if ((i + rowIndex) % 2 === 0) {
-          doc.rect(this.pageMargin, currentY - 2, pageWidth, 16)
-             .fill('#fafafa');
-        }
-
-        headers.forEach((header, colIndex) => {
-          const x = this.pageMargin + (colIndex * columnWidth);
-          const value = row[header] || '';
-          doc.text(String(value), x + 5, currentY, { 
-            width: columnWidth - 10, 
-            align: 'left',
-            lineBreak: false 
-          });
+      headers.forEach((header, colIndex) => {
+        const x = this.pageMargin + (colIndex * columnWidth);
+        const value = row[header] || '';
+        doc.text(String(value), x + 5, tableY, { 
+          width: columnWidth - 10, 
+          align: 'left',
+          lineBreak: false 
         });
-        currentY += 16;
       });
-      
-      processedCount += chunk.length;
-      
-      // Allow garbage collection between chunks
-      if (i > 0 && i % (chunkSize * 3) === 0) {
-        if (global.gc) {
-          global.gc();
-        }
-      }
-    }
+      tableY += 16;
+    });
 
-    // Add note if data was truncated
-    if (data.length > this.maxRecords) {
-      doc.fontSize(10)
-         .fillColor('#666666')
-         .text(`Note: Report limited to ${this.maxRecords} records. Total records: ${data.length}`, 
-               this.pageMargin, currentY + 10);
-      currentY += 25;
-    }
-
-    doc.y = currentY + 10;
+    doc.y = tableY + 10;
     return doc.y;
   }
 
@@ -624,60 +587,24 @@ class PDFService {
     }
   }
 
-  // Memory-optimized PDF finalization using streams
+  // Finalize PDF and return buffer
   async finalizePDF(doc) {
+    // Add page numbers
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i++) {
+      doc.switchToPage(i);
+      doc.font('Helvetica').fontSize(8)
+         .text(`Page ${i + 1} of ${pages.count}`, 
+               doc.page.width - 100, doc.page.height - 30, 
+               { align: 'center' });
+    }
+
     return new Promise((resolve, reject) => {
-      try {
-        const buffers = [];
-        let totalSize = 0;
-        
-        // Set up streaming with memory monitoring
-        doc.on('data', (chunk) => {
-          buffers.push(chunk);
-          totalSize += chunk.length;
-          
-          // Monitor memory usage and warn if getting too large
-          if (totalSize > 50 * 1024 * 1024) { // 50MB warning
-            console.warn('PDF size exceeding 50MB, consider reducing data set');
-          }
-        });
-        
-        doc.on('end', () => {
-          try {
-            const pdfBuffer = Buffer.concat(buffers);
-            
-            // Clear buffers array to free memory immediately
-            buffers.length = 0;
-            
-            // Force garbage collection if available
-            if (global.gc) {
-              global.gc();
-            }
-            
-            resolve(pdfBuffer);
-          } catch (concatError) {
-            console.error('Error concatenating PDF buffers:', concatError);
-            reject(new Error('Failed to finalize PDF due to memory constraints'));
-          }
-        });
-        
-        doc.on('error', (error) => {
-          console.error('PDF generation error:', error);
-          reject(error);
-        });
-
-        // Add simplified page numbering without buffering pages
-        // Note: We skip complex page numbering to avoid memory overhead from bufferedPageRange()
-        doc.font('Helvetica').fontSize(8)
-           .text('Generated by MedTracker System', 
-                 doc.page.width - 200, doc.page.height - 30, 
-                 { align: 'left' });
-
-        doc.end();
-      } catch (error) {
-        console.error('Error in finalizePDF:', error);
-        reject(error);
-      }
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      doc.end();
     });
   }
 }

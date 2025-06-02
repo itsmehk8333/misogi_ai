@@ -28,15 +28,26 @@ const allowedOrigins = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
+
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
 console.log('🌐 Allowed CORS origins:', allowedOrigins);
 console.log('🌐 NODE_ENV:', process.env.NODE_ENV);
 
-// Temporary: Allow all origins for debugging CORS issues
+// CORS configuration with specific allowed origins
 app.use(cors({
-  origin: true, // Allow all origins temporarily
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      console.warn('🚫 CORS: Origin not allowed:', origin);
+      return callback(new Error('Not allowed by CORS'), false);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
@@ -56,11 +67,19 @@ app.use(cors({
 // Handle preflight requests explicitly
 app.options('*', (req, res) => {
   console.log('🚀 Handling preflight OPTIONS request for:', req.path);
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,X-File-Name');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.sendStatus(200);
+  console.log('🚀 Request origin:', req.headers.origin);
+  
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,X-File-Name');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.sendStatus(200);
+  } else {
+    console.warn('🚫 OPTIONS: Origin not allowed:', origin);
+    res.sendStatus(403);
+  }
 });
 
 // Rate limiting
