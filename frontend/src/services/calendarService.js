@@ -54,10 +54,26 @@ export const calendarService = {
   // Sync all active regimens to calendar
   syncAllRegimens: async () => {
     try {
-      const response = await apiClient.post('/calendar/sync-all');
+      // Use extended timeout for sync-all operations
+      const response = await apiClient.post('/calendar/sync-all', {}, {
+        timeout: 90000 // 90 seconds for bulk sync operations
+      });
       return handleApiResponse(response);
     } catch (error) {
-      throw handleApiError(error);
+      const handledError = handleApiError(error);
+      
+      // Add specific handling for calendar sync errors
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        handledError.message = 'Calendar sync is taking longer than expected. This may happen with many medications. Try syncing individual medications from Settings.';
+        handledError.suggestion = 'Go to Settings > Calendar Integration to sync medications individually';
+      }
+      
+      if (error.response?.data?.reconnectRequired) {
+        handledError.reconnectRequired = true;
+        handledError.message = 'Your Google Calendar connection has expired. Please reconnect.';
+      }
+      
+      throw handledError;
     }
   },
 
