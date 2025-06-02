@@ -116,13 +116,16 @@ router.get('/adherence', auth, [
     // Get overall stats
     const overallStats = await DoseLog.getAdherenceStats(req.user._id, start, end);
     
-    // Get medication-specific stats
+    // Get medication-specific stats (limit to prevent memory issues)
     const medicationStats = await DoseLog.aggregate([
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
         }
+      },
+      {
+        $limit: 5000 // Limit to prevent memory overflow
       },
       {
         $lookup: {
@@ -163,16 +166,22 @@ router.get('/adherence', auth, [
       },
       {
         $sort: { adherencePercentage: -1 }
+      },
+      {
+        $limit: 50 // Limit medications shown in report
       }
     ]);
     
-    // Get daily adherence data for chart
+    // Get daily adherence data for chart (limit to prevent memory issues)
     const dailyAdherence = await DoseLog.aggregate([
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
         }
+      },
+      {
+        $limit: 3000 // Limit to prevent memory overflow
       },
       {
         $group: {
@@ -197,6 +206,9 @@ router.get('/adherence', auth, [
       },
       {
         $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 }
+      },
+      {
+        $limit: 365 // Limit to one year of daily data max
       }
     ]);
     
@@ -259,6 +271,9 @@ router.get('/adherence', auth, [
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=adherence-report.csv');      return res.send(csv);
     } else if (format === 'pdf') {
+      // Get real streak information
+      const streakInfo = await DoseLog.getStreakInfo(req.user._id);
+      
       // Transform data to match PDFService expectations
       const pdfData = {
         reportPeriod: report.reportPeriod,
@@ -270,9 +285,9 @@ router.get('/adherence', auth, [
         missedDoses: report.overallStats?.missedDoses || 0,
         skippedDoses: report.overallStats?.skippedDoses || 0,
         
-        // Add streak information (placeholder for now)
-        currentStreak: 0,
-        bestStreak: 0,
+        // Add real streak information
+        currentStreak: streakInfo?.currentStreak || 0,
+        bestStreak: streakInfo?.bestStreak || 0,
         
         // Map medication stats to medicationBreakdown
         medicationBreakdown: report.medicationStats?.map(med => ({

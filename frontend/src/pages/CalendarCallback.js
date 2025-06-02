@@ -28,23 +28,29 @@ const CalendarCallback = () => {
         const result = await calendarService.handleCallback(code);
         
         setStatus('success');
-        setMessage('Google Calendar connected successfully!');
-
-        // Notify parent window if opened in popup
+        setMessage('Google Calendar connected successfully!');        // Notify parent window if opened in popup
         if (window.opener) {
           window.opener.postMessage({
             type: 'GOOGLE_CALENDAR_AUTH_SUCCESS',
             calendars: result.calendars
           }, window.location.origin);
+          
+          // Add automatic refresh for the parent window
+          setTimeout(() => {
+            window.opener.location.reload();
+          }, 500);
+          
           window.close();
           return;
         }
 
-        // Redirect after 2 seconds if not in popup
+        // Redirect after 2 seconds if not in popup and refresh the page
         setTimeout(() => {
           navigate('/settings?tab=calendar', { 
             state: { message: 'Google Calendar connected successfully!' }
           });
+          // Also refresh the page to ensure UI updates
+          window.location.reload();
         }, 2000);
 
       } catch (error) {
