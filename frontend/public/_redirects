@@ -1,0 +1,8 @@
+# SPA fallback - redirect all requests to index.html unless they match an API route or static asset
+/*    /index.html   200
+
+# Handle specific API routes (if needed for development/testing)
+/api/*  http://localhost:5000/api/:splat  200
+
+# Prevent caching of index.html to ensure updated builds are served
+/index.html   Cache-Control: no-cache

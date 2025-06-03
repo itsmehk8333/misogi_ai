@@ -152,11 +152,14 @@ router.get('/adherence', auth, [
           averageMinutesLate: { $avg: '$minutesLate' },
           totalPoints: { $sum: '$rewards.points' }
         }
-      },
-      {
+      },      {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           }
         }
       },
@@ -190,11 +193,14 @@ router.get('/adherence', auth, [
             $sum: { $cond: [{ $eq: ['$status', 'taken'] }, 1, 0] }
           }
         }
-      },
-      {
+      },      {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           }
         }
       },
@@ -261,13 +267,12 @@ router.get('/adherence', auth, [
       dailyAdherence,
       missedMedications,
       generatedAt: new Date()
-    };
-
-    if (format === 'csv') {
+    };    if (format === 'csv') {
       // Convert to CSV format
       let csv = 'Date,Total Doses,Adherence Percentage\n';
       dailyAdherence.forEach(day => {
-        csv += `${day.date},${day.totalDoses},${day.adherencePercentage.toFixed(2)}\n`;
+        const adherencePercentage = (day.adherencePercentage ?? 0).toFixed(2);
+        csv += `${day.date},${day.totalDoses},${adherencePercentage}\n`;
       });
 
       res.setHeader('Content-Type', 'text/csv');
@@ -286,25 +291,36 @@ router.get('/adherence', auth, [
 
         // Add streak information (placeholder for now)
         currentStreak: 0,
-        bestStreak: 0,
-
-        // Map medication stats to medicationBreakdown
+        bestStreak: 0,        // Map medication stats to medicationBreakdown
         medicationBreakdown: report.medicationStats?.map(med => ({
           medicationName: med.medicationName,
-          adherenceRate: med.adherencePercentage,
+          adherenceRate: med.adherencePercentage ?? 0,
           dosesTaken: med.takenDoses,
           dossesMissed: med.missedDoses,
           totalDoses: med.totalDoses
-        })) || [],
+        })) || [],        // Add daily adherence as weeklyTrends for now
+        weeklyTrends: report.dailyAdherence?.slice(0, 12).map((day, index) => {
+          // Convert string date back to Date object for proper handling
+          let weekStartDate;
+          try {
+            weekStartDate = new Date(day.date);
+            // Ensure it's a valid date
+            if (isNaN(weekStartDate.getTime())) {
+              weekStartDate = new Date(); // Fallback to current date
+            }
+          } catch (error) {
+            console.error('Date parsing error:', error, 'day.date:', day.date);
+            weekStartDate = new Date(); // Fallback to current date
+          }
 
-        // Add daily adherence as weeklyTrends for now
-        weeklyTrends: report.dailyAdherence?.slice(0, 12).map((day, index) => ({
-          weekStart: day.date,
-          adherenceRate: day.adherencePercentage,
-          dosesTaken: day.takenDoses,
-          dossesMissed: day.totalDoses - day.takenDoses,
-          totalDoses: day.totalDoses
-        })) || []
+          return {
+            weekStart: weekStartDate.toISOString(),
+            adherenceRate: day.adherencePercentage ?? 0,
+            dosesTaken: day.takenDoses || 0,
+            dossesMissed: (day.totalDoses || 0) - (day.takenDoses || 0),
+            totalDoses: day.totalDoses || 0
+          };
+        }) || []
       };
 
       // Generate PDF report
@@ -368,8 +384,7 @@ router.get('/calendar', auth, [
           },
           missedDoses: {
             $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] }
-          },
-          skippedDoses: {
+          },          skippedDoses: {
             $sum: { $cond: [{ $eq: ['$status', 'skipped'] }, 1, 0] }
           }
         }
@@ -377,7 +392,11 @@ router.get('/calendar', auth, [
       {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           },
           level: {
             $switch: {
@@ -453,13 +472,16 @@ router.get('/trends', auth, [
           totalDoses: { $sum: 1 },
           takenDoses: {
             $sum: { $cond: [{ $eq: ['$status', 'taken'] }, 1, 0] }
-          }
-        }
+          }        }
       },
       {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           }
         }
       },
@@ -487,13 +509,16 @@ router.get('/trends', auth, [
           totalDoses: { $sum: 1 },
           takenDoses: {
             $sum: { $cond: [{ $eq: ['$status', 'taken'] }, 1, 0] }
-          }
-        }
+          }        }
       },
       {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           },
           dayName: {
             $switch: {
@@ -685,13 +710,16 @@ router.get('/weekly-trends', auth, [
           takenDoses: {
             $sum: { $cond: [{ $eq: ['$status', 'taken'] }, 1, 0] }
           },
-          firstDayOfWeek: { $min: '$scheduledTime' }
-        }
+          firstDayOfWeek: { $min: '$scheduledTime' }        }
       },
       {
         $addFields: {
           adherencePercentage: {
-            $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100]
+            $cond: {
+              if: { $gt: ['$totalDoses', 0] },
+              then: { $multiply: [{ $divide: ['$takenDoses', '$totalDoses'] }, 100] },
+              else: 0
+            }
           },
           weekLabel: {
             $dateToString: { format: '%b %d', date: '$firstDayOfWeek' }

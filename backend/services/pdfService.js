@@ -212,14 +212,24 @@ class PDFService {
 
     return doc.y + 10;
   }
-
   // Generate adherence report PDF
   async generateAdherenceReport(data) {
     const doc = this.createDocument();
     
-    // Header
-    let yPos = this.addHeader(doc, 'Medication Adherence Report', 
-      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
+    // Header with safe date formatting
+    let yPos;
+    try {
+      const startDate = new Date(data.reportPeriod.startDate);
+      const endDate = new Date(data.reportPeriod.endDate);
+      const startDateStr = !isNaN(startDate.getTime()) ? format(startDate, 'MMM dd, yyyy') : 'Invalid Date';
+      const endDateStr = !isNaN(endDate.getTime()) ? format(endDate, 'MMM dd, yyyy') : 'Invalid Date';
+      
+      yPos = this.addHeader(doc, 'Medication Adherence Report', 
+        `Period: ${startDateStr} - ${endDateStr}`);
+    } catch (error) {
+      console.error('Date formatting error in adherence report header:', error);
+      yPos = this.addHeader(doc, 'Medication Adherence Report', 'Period: Invalid Dates');
+    }
 
     // Overall statistics
     yPos = this.addSectionHeader(doc, 'Summary Statistics', yPos);
@@ -233,20 +243,31 @@ class PDFService {
       'Best Streak': `${data.bestStreak || 0} days`
     };
 
-    yPos = this.addKeyValueSection(doc, stats, yPos);
-
-    // Weekly trends table
+    yPos = this.addKeyValueSection(doc, stats, yPos);    // Weekly trends table
     if (data.weeklyTrends && data.weeklyTrends.length > 0) {
       yPos = this.addSectionHeader(doc, 'Weekly Adherence Trends', yPos + 20);
       
       const headers = ['Week Starting', 'Adherence %', 'Doses Taken', 'Doses Missed', 'Total Doses'];
-      const weeklyData = data.weeklyTrends.slice(0, 12).map(week => ({
-        'Week Starting': format(new Date(week.weekStart), 'MMM dd, yyyy'),
-        'Adherence %': `${week.adherenceRate?.toFixed(1) || 0}%`,
-        'Doses Taken': week.dosesTaken || 0,
-        'Doses Missed': week.dossesMissed || 0,
-        'Total Doses': week.totalDoses || 0
-      }));
+      const weeklyData = data.weeklyTrends.slice(0, 12).map(week => {
+        // Safely parse and format the date
+        let formattedDate = 'Invalid Date';
+        try {
+          const date = new Date(week.weekStart);
+          if (!isNaN(date.getTime())) {
+            formattedDate = format(date, 'MMM dd, yyyy');
+          }
+        } catch (error) {
+          console.error('Date formatting error:', error, 'weekStart:', week.weekStart);
+        }
+
+        return {
+          'Week Starting': formattedDate,
+          'Adherence %': `${week.adherenceRate?.toFixed(1) || 0}%`,
+          'Doses Taken': week.dosesTaken || 0,
+          'Doses Missed': week.dossesMissed || 0,
+          'Total Doses': week.totalDoses || 0
+        };
+      });
 
       this.addTable(doc, headers, weeklyData, yPos);
     }
@@ -276,27 +297,51 @@ class PDFService {
       doc.on('error', reject);
     });
   }
-
   // Generate dose logs report PDF
   async generateDoseLogsReport(data) {
     const doc = this.createDocument();
     
-    // Header
-    let yPos = this.addHeader(doc, 'Dose Logs Report',
-      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
+    // Header with safe date formatting
+    let yPos;
+    try {
+      const startDate = new Date(data.reportPeriod.startDate);
+      const endDate = new Date(data.reportPeriod.endDate);
+      const startDateStr = !isNaN(startDate.getTime()) ? format(startDate, 'MMM dd, yyyy') : 'Invalid Date';
+      const endDateStr = !isNaN(endDate.getTime()) ? format(endDate, 'MMM dd, yyyy') : 'Invalid Date';
+      
+      yPos = this.addHeader(doc, 'Dose Logs Report',
+        `Period: ${startDateStr} - ${endDateStr}`);
+    } catch (error) {
+      console.error('Date formatting error in dose logs report header:', error);
+      yPos = this.addHeader(doc, 'Dose Logs Report', 'Period: Invalid Dates');
+    }
 
     if (data.doses && data.doses.length > 0) {
       yPos = this.addSectionHeader(doc, 'Dose History', yPos);
-      
-      const headers = ['Date', 'Time', 'Medication', 'Dosage', 'Status', 'Notes'];
-      const doseData = data.doses.map(dose => ({
-        'Date': format(new Date(dose.timestamp || dose.scheduledTime), 'MMM dd, yyyy'),
-        'Time': format(new Date(dose.timestamp || dose.scheduledTime), 'HH:mm'),
-        'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
-        'Dosage': dose.dosage || `${dose.regimen?.dosage?.amount || ''} ${dose.regimen?.dosage?.unit || ''}`.trim() || 'N/A',
-        'Status': dose.status || 'pending',
-        'Notes': (dose.notes || '').substring(0, 30) + (dose.notes?.length > 30 ? '...' : '')
-      }));
+        const headers = ['Date', 'Time', 'Medication', 'Dosage', 'Status', 'Notes'];
+      const doseData = data.doses.map(dose => {
+        // Safe date formatting
+        let dateStr = 'Invalid Date';
+        let timeStr = 'Invalid Time';
+        try {
+          const doseDate = new Date(dose.timestamp || dose.scheduledTime);
+          if (!isNaN(doseDate.getTime())) {
+            dateStr = format(doseDate, 'MMM dd, yyyy');
+            timeStr = format(doseDate, 'HH:mm');
+          }
+        } catch (error) {
+          console.error('Date formatting error in dose data:', error, 'timestamp:', dose.timestamp, 'scheduledTime:', dose.scheduledTime);
+        }
+        
+        return {
+          'Date': dateStr,
+          'Time': timeStr,
+          'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
+          'Dosage': dose.dosage || `${dose.regimen?.dosage?.amount || ''} ${dose.regimen?.dosage?.unit || ''}`.trim() || 'N/A',
+          'Status': dose.status || 'pending',
+          'Notes': (dose.notes || '').substring(0, 30) + (dose.notes?.length > 30 ? '...' : '')
+        };
+      });
 
       this.addTable(doc, headers, doseData, yPos);
     } else {
@@ -366,14 +411,24 @@ class PDFService {
 
     return doc;
   }
-
   // Generate missed doses report PDF
   async generateMissedDosesReport(data) {
     const doc = this.createDocument();
     
-    // Header
-    let yPos = this.addHeader(doc, 'Missed Doses Report',
-      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
+    // Header with safe date formatting
+    let yPos;
+    try {
+      const startDate = new Date(data.reportPeriod.startDate);
+      const endDate = new Date(data.reportPeriod.endDate);
+      const startDateStr = !isNaN(startDate.getTime()) ? format(startDate, 'MMM dd, yyyy') : 'Invalid Date';
+      const endDateStr = !isNaN(endDate.getTime()) ? format(endDate, 'MMM dd, yyyy') : 'Invalid Date';
+      
+      yPos = this.addHeader(doc, 'Missed Doses Report',
+        `Period: ${startDateStr} - ${endDateStr}`);
+    } catch (error) {
+      console.error('Date formatting error in missed doses report header:', error);
+      yPos = this.addHeader(doc, 'Missed Doses Report', 'Period: Invalid Dates');
+    }
 
     // Summary statistics
     if (data.summary) {
@@ -392,15 +447,29 @@ class PDFService {
     // Missed doses table
     if (data.missedDoses && data.missedDoses.length > 0) {
       yPos = this.addSectionHeader(doc, 'Missed Dose Details', yPos + 20);
-      
-      const headers = ['Date', 'Medication', 'Scheduled Time', 'Reason', 'Impact'];
-      const missedData = data.missedDoses.map(dose => ({
-        'Date': format(new Date(dose.scheduledTime), 'MMM dd, yyyy'),
-        'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
-        'Scheduled Time': format(new Date(dose.scheduledTime), 'HH:mm'),
-        'Reason': (dose.notes || 'Not specified').substring(0, 25) + (dose.notes?.length > 25 ? '...' : ''),
-        'Impact': dose.criticality || 'Low'
-      }));
+        const headers = ['Date', 'Medication', 'Scheduled Time', 'Reason', 'Impact'];
+      const missedData = data.missedDoses.map(dose => {
+        // Safe date formatting
+        let dateStr = 'Invalid Date';
+        let timeStr = 'Invalid Time';
+        try {
+          const doseDate = new Date(dose.scheduledTime);
+          if (!isNaN(doseDate.getTime())) {
+            dateStr = format(doseDate, 'MMM dd, yyyy');
+            timeStr = format(doseDate, 'HH:mm');
+          }
+        } catch (error) {
+          console.error('Date formatting error in missed dose data:', error, 'scheduledTime:', dose.scheduledTime);
+        }
+        
+        return {
+          'Date': dateStr,
+          'Medication': dose.medication?.name || dose.regimen?.medication?.name || 'Unknown',
+          'Scheduled Time': timeStr,
+          'Reason': (dose.notes || 'Not specified').substring(0, 25) + (dose.notes?.length > 25 ? '...' : ''),
+          'Impact': dose.criticality || 'Low'
+        };
+      });
 
       this.addTable(doc, headers, missedData, yPos);
     } else {
@@ -410,27 +479,49 @@ class PDFService {
 
     return doc;
   }
-
   // Generate calendar data report PDF
   async generateCalendarDataReport(data) {
     const doc = this.createDocument();
     
-    // Header
-    let yPos = this.addHeader(doc, 'Calendar & Schedule Report',
-      `Period: ${format(new Date(data.reportPeriod.startDate), 'MMM dd, yyyy')} - ${format(new Date(data.reportPeriod.endDate), 'MMM dd, yyyy')}`);
+    // Header with safe date formatting
+    let yPos;
+    try {
+      const startDate = new Date(data.reportPeriod.startDate);
+      const endDate = new Date(data.reportPeriod.endDate);
+      const startDateStr = !isNaN(startDate.getTime()) ? format(startDate, 'MMM dd, yyyy') : 'Invalid Date';
+      const endDateStr = !isNaN(endDate.getTime()) ? format(endDate, 'MMM dd, yyyy') : 'Invalid Date';
+      
+      yPos = this.addHeader(doc, 'Calendar & Schedule Report',
+        `Period: ${startDateStr} - ${endDateStr}`);
+    } catch (error) {
+      console.error('Date formatting error in calendar data report header:', error);
+      yPos = this.addHeader(doc, 'Calendar & Schedule Report', 'Period: Invalid Dates');
+    }
 
     // Daily schedule summary
     if (data.dailySchedule && data.dailySchedule.length > 0) {
       yPos = this.addSectionHeader(doc, 'Daily Schedule Summary', yPos);
-      
-      const headers = ['Date', 'Scheduled Doses', 'Completed', 'Missed', 'Adherence %'];
-      const scheduleData = data.dailySchedule.map(day => ({
-        'Date': format(new Date(day.date), 'MMM dd, yyyy'),
-        'Scheduled Doses': day.scheduledDoses || 0,
-        'Completed': day.completedDoses || 0,
-        'Missed': day.missedDoses || 0,
-        'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
-      }));
+        const headers = ['Date', 'Scheduled Doses', 'Completed', 'Missed', 'Adherence %'];
+      const scheduleData = data.dailySchedule.map(day => {
+        // Safe date formatting
+        let dateStr = 'Invalid Date';
+        try {
+          const dayDate = new Date(day.date);
+          if (!isNaN(dayDate.getTime())) {
+            dateStr = format(dayDate, 'MMM dd, yyyy');
+          }
+        } catch (error) {
+          console.error('Date formatting error in schedule data:', error, 'date:', day.date);
+        }
+        
+        return {
+          'Date': dateStr,
+          'Scheduled Doses': day.scheduledDoses || 0,
+          'Completed': day.completedDoses || 0,
+          'Missed': day.missedDoses || 0,
+          'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
+        };
+      });
 
       this.addTable(doc, headers, scheduleData, yPos);
     }
@@ -554,14 +645,26 @@ class PDFService {
 
     if (data && data.length > 0) {
       yPos = this.addSectionHeader(doc, 'Daily Adherence Summary', yPos);
-      
-      const headers = ['Date', 'Total Doses', 'Taken', 'Adherence %'];
-      const tableData = data.slice(0, 40).map(day => ({
-        'Date': format(new Date(day.date), 'MM/dd/yyyy'),
-        'Total Doses': day.totalDoses,
-        'Taken': day.takenDoses,
-        'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
-      }));
+        const headers = ['Date', 'Total Doses', 'Taken', 'Adherence %'];
+      const tableData = data.slice(0, 40).map(day => {
+        // Safe date formatting
+        let dateStr = 'Invalid Date';
+        try {
+          const dayDate = new Date(day.date);
+          if (!isNaN(dayDate.getTime())) {
+            dateStr = format(dayDate, 'MM/dd/yyyy');
+          }
+        } catch (error) {
+          console.error('Date formatting error in calendar report data:', error, 'date:', day.date);
+        }
+        
+        return {
+          'Date': dateStr,
+          'Total Doses': day.totalDoses,
+          'Taken': day.takenDoses,
+          'Adherence %': `${day.adherenceRate?.toFixed(1) || 0}%`
+        };
+      });
 
       this.addTable(doc, headers, tableData, yPos);
     } else {
