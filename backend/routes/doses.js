@@ -189,16 +189,73 @@ router.post('/log', auth, [
       return res.status(404).json({ message: 'Regimen not found' });
     }
     
-    // Check if dose already logged
+    // Check if dose already logged - if so, update it instead of creating duplicate
     const existingLog = await DoseLog.findOne({
       user: req.user._id,
       regimen: regimenId,
       scheduledTime: new Date(scheduledTime)
     });
     
+    console.log('Duplicate check:', {
+      userId: req.user._id,
+      regimenId,
+      scheduledTime: new Date(scheduledTime),
+      existingLog: existingLog ? 'Found' : 'Not found'
+    });
+    
     if (existingLog) {
-      return res.status(400).json({ message: 'Dose already logged for this time' });
+      console.log('Updating existing dose log:', existingLog._id);
+      // Update existing dose log instead of creating new one
+      const updateData = {
+        status,
+        actualTime: actualTime ? new Date(actualTime) : (status === 'taken' ? new Date() : null),
+        notes,
+        sideEffects,
+        effectiveness,
+        withFood,
+        symptoms,
+        location
+      };
+
+      // Only include mood if it's not empty (to avoid enum validation errors)
+      if (mood && mood.trim() !== '') {
+        updateData.mood = mood;
+      }
+
+      // Store old status for adherence stats update
+      const oldStatus = existingLog.status;
+
+      Object.assign(existingLog, updateData);
+      await existingLog.save();
+      await existingLog.populate(['medication', 'regimen']);
+
+      // Update user adherence stats if status changed
+      if (oldStatus !== existingLog.status) {
+        const oldTaken = oldStatus === 'taken' ? -1 : 0;
+        const oldMissed = oldStatus === 'missed' ? -1 : 0;
+        const newTaken = existingLog.status === 'taken' ? 1 : 0;
+        const newMissed = existingLog.status === 'missed' ? 1 : 0;
+        
+        await req.user.updateAdherenceStats(
+          oldTaken + newTaken,
+          oldMissed + newMissed
+        );
+      }
+
+      return res.status(200).json({
+        message: 'Dose log updated successfully',
+        doseLog: existingLog,
+        rewards: existingLog.rewards,
+        points: existingLog.rewards.points
+      });
     }
+    
+    console.log('Creating new dose log for:', {
+      userId: req.user._id,
+      regimenId,
+      scheduledTime: new Date(scheduledTime),
+      status
+    });
     
     // Create dose log
     const doseLogData = {

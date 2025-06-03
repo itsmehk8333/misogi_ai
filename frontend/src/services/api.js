@@ -116,12 +116,13 @@ export const handleApiError = (error) => {
   const status = error.response?.status;
   const details = error.response?.data?.details;
   
-  return {
-    message,
-    status,
-    details,
-    isNetworkError: !error.response,
-  };
+  // Create a proper Error object with additional properties
+  const apiError = new Error(message);
+  apiError.status = status;
+  apiError.details = details;
+  apiError.isNetworkError = !error.response;
+  
+  return apiError;
 };
 
 export default api;

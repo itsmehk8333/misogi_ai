@@ -445,6 +445,17 @@ const DoseLogging = () => {
       await fetchTodaysDoses();
     } catch (error) {
       console.error('Failed to log dose:', error.message || error);
+      
+      // Show user-friendly error message
+      const errorMessage = error.message || error.toString() || 'Failed to log dose';
+      alert(`❌ Error logging dose: ${errorMessage}`);
+      
+      // If it's a "dose already logged" error, suggest refresh
+      if (errorMessage.toLowerCase().includes('already logged')) {
+        if (window.confirm('This dose may have already been logged. Would you like to refresh the page to see the latest data?')) {
+          window.location.reload();
+        }
+      }
     }
   };
 
