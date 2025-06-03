@@ -253,7 +253,6 @@ const AddMedication = () => {
         if (calendarStatus.isConnected && calendarStatus.settings?.autoSync) {
           // Automatically sync the new regimen to calendar
           await calendarService.syncScheduleToCalendar(newRegimen.regimen._id);
-          console.log('✅ New regimen automatically synced to Google Calendar');
         }
       } catch (calendarError) {
         // Don't fail the entire operation if calendar sync fails

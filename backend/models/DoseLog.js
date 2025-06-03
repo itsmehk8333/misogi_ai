@@ -450,4 +450,11 @@ doseLogSchema.statics.getStreakInfo = async function(userId) {
   }
 };
 
+// Performance indexes for rewards system optimization
+doseLogSchema.index({ user: 1, scheduledTime: -1 }); // Primary rewards query
+doseLogSchema.index({ user: 1, status: 1, scheduledTime: -1 }); // Status-based queries
+doseLogSchema.index({ user: 1, updatedAt: -1 }); // Recent activity queries
+doseLogSchema.index({ user: 1, 'rewards.points': 1 }); // Rewards points queries
+doseLogSchema.index({ scheduledTime: -1 }); // Time-based aggregations
+
 module.exports = mongoose.model('DoseLog', doseLogSchema);

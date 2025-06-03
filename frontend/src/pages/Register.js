@@ -94,7 +94,6 @@ const Register = () => {
     }
 
     try {
-      console.log('🔍 Registration Debug: Starting...');
       debugAuthState();
       prepareForRegistration();
       
@@ -107,12 +106,9 @@ const Register = () => {
         phoneNumber: formData.phoneNumber.trim() || undefined
       };
       
-      console.log('📝 Calling register function...');
       const result = await register(userData);
-      console.log('✅ Registration result:', result);
       
       if (result) {
-        console.log('🚀 Registration successful, redirecting to login...');
         // Navigate to login page so user can sign in
         navigate('/login', { 
           replace: true, 

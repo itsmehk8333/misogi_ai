@@ -10,11 +10,12 @@ const RewardsCenter = () => {
   const { rewards, getRecentRewards, doses } = useDoseStore();
   const { 
     userRewards, 
-    fetchUserRewards, 
+    fetchAllUserRewardsConsolidated,
+    fetchAllUserRewards,
     achievements, 
     claimDailyReward, 
     canClaimDailyReward,
-    fetchUserAchievements 
+    loading: rewardsLoading
   } = useRewardsStore();
   const { user, token, isAuthenticated, login } = useAuthStore();
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -25,14 +26,31 @@ const RewardsCenter = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     setLoading(true);
-    fetchUserRewards()
-      .then(data => console.log('Fetched rewards:', data))
-      .catch(error => console.error('Error fetching rewards:', error))
+    
+    // Use the OPTIMIZED consolidated fetch function for best performance
+    fetchAllUserRewardsConsolidated(user?._id)
+      .then(data => {
+        console.log('✅ Fetched consolidated rewards and achievements:', {
+          totalPoints: data.rewards?.totalPoints,
+          achievementsCount: data.achievements?.length
+        });
+      })
+      .catch(error => {
+        console.error('❌ Error fetching consolidated rewards, falling back to legacy method:', error);
+        // Fallback to legacy parallel fetch if consolidated fails
+        return fetchAllUserRewards(user?._id);
+      })
+      .then(fallbackData => {
+        if (fallbackData) {
+          console.log('✅ Fallback fetch successful:', {
+            totalPoints: fallbackData.rewards?.totalPoints,
+            achievementsCount: fallbackData.achievements?.length
+          });
+        }
+      })
+      .catch(error => console.error('❌ Both fetch methods failed:', error))
       .finally(() => setLoading(false));
-    fetchUserAchievements()
-      .then(data => console.log('Fetched achievements:', data))
-      .catch(error => console.error('Error fetching achievements:', error));
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user?._id, fetchAllUserRewardsConsolidated, fetchAllUserRewards]);
 
   // Use actual rewards data from store, fallback to local calculation
   const totalPoints = userRewards?.totalPoints || rewards.reduce((total, reward) => total + (reward.points || 0), 0);
@@ -179,7 +197,8 @@ const RewardsCenter = () => {
       try {
         setLoading(true);
         await claimDailyReward();
-        await fetchUserRewards();
+        // Force refresh rewards data after claiming
+        await fetchAllUserRewards(user?._id, true);
       } catch (error) {
         console.error('Failed to claim daily reward:', error);
         setClaimError(error.message || 'Failed to claim daily reward');

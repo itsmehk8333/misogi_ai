@@ -1,7 +1,8 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "index.js",  "scripts": {
+  "main": "index.js",
+  "scripts": {
     "start": "node --max-old-space-size=2048 --optimize-for-size --expose-gc server.js",
     "dev": "nodemon --max-old-space-size=2048 --optimize-for-size --expose-gc server.js",
     "start:prod": "node --max-old-space-size=4096 --optimize-for-size --gc-global --expose-gc server.js",
@@ -13,6 +14,7 @@
   "description": "",
   "dependencies": {
     "bcryptjs": "^3.0.2",
+    "compression": "^1.8.0",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
     "dotenv": "^16.5.0",

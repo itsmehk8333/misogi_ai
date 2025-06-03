@@ -3,53 +3,36 @@ import { sanitizeForJSON, validateJSON } from '../utils/jsonUtils';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
-console.log('🌐 API Base URL:', API_BASE_URL);
-
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Increased timeout for remote server
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: false, // Explicitly set to false since we're using tokens
+  withCredentials: false,
 });
 
 // Request interceptor to add auth token and validate data
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('authToken');
-    console.log('🔌 API: Request to', config.url);
-    console.log('🔌 API: Auth token present?', !!token);
     
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      console.log('🔌 API: Authorization header added');
-    } else {
-      console.warn('🔌 API: No auth token available for request');
     }
 
     // Sanitize and validate JSON data before sending
     if (config.data && typeof config.data === 'object') {
       try {
-        // Sanitize the data first
         config.data = sanitizeForJSON(config.data);
         
-        // Validate that it can be serialized to JSON
         if (!validateJSON(config.data)) {
           throw new Error('Data validation failed');
         }
         
-        // Log the data being sent for debugging
-        console.log('🔌 API: Sending API request:', {
-          url: config.url,
-          method: config.method,
-          data: config.data
-        });
-        
       } catch (error) {
-        console.error('🔌 API: Invalid data being sent to API:', config.data);
-        console.error('🔌 API: JSON processing error:', error);
+        console.error('API: Invalid data format:', error.message);
         return Promise.reject(new Error('Invalid data format: ' + error.message));
       }
     }
@@ -64,20 +47,10 @@ api.interceptors.request.use(
 // Response interceptor to handle common errors
 api.interceptors.response.use(
   (response) => {
-    console.log('🔌 API: Successful response from', response.config.url);
-    console.log('🔌 API: Status code:', response.status);
     return response;
   },
   (error) => {
-    console.error('🔌 API: Error response details:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      message: error.response?.data?.message || error.message,
-      data: error.response?.data
-    });
-    
     if (error.response?.status === 401) {
-      console.warn('🔌 API: 401 Unauthorized - clearing auth data');
       // Token expired or invalid
       localStorage.removeItem('authToken');
       localStorage.removeItem('authUser');
@@ -86,7 +59,7 @@ api.interceptors.response.use(
     
     // Handle network errors
     if (!error.response) {
-      console.error('🔌 API: Network error - no response received');
+      console.error('Network error - no response received');
       error.message = 'Network error. Please check your connection.';
     }
     

@@ -27,14 +27,23 @@ const useRewardsStore = create(
       setError: (error) => set({ error }),
       clearError: () => set({ error: null }),
 
-      // Fetch user rewards from API
-      fetchUserRewards: async (userId) => {
-        console.log('🎯 fetchUserRewards called with userId:', userId);
+      // Fetch user rewards from API with caching
+      fetchUserRewards: async (userId, forceRefresh = false) => {
+        const state = get();
+        
+        // Skip if already loading or data exists and not forcing refresh
+        if (state.loading || (!forceRefresh && state.userRewards?.totalPoints !== undefined && state.userRewards.generatedAt)) {
+          const cacheAge = Date.now() - new Date(state.userRewards.generatedAt).getTime();
+          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+          
+          if (cacheAge < CACHE_DURATION) {
+            return state.userRewards;
+          }
+        }
+        
         set({ loading: true, error: null });
         try {
-          console.log('🎯 Calling RewardService.getUserRewards...');
           const rewardsData = await RewardService.getUserRewards(userId);
-          console.log('🎯 Rewards data received:', rewardsData);
           set({ 
             userRewards: rewardsData,
             loading: false 
@@ -50,14 +59,18 @@ const useRewardsStore = create(
         }
       },
 
-      // Fetch achievements
-      fetchUserAchievements: async (userId) => {
-        console.log('🏆 fetchUserAchievements called with userId:', userId);
+      // Fetch achievements with caching
+      fetchUserAchievements: async (userId, forceRefresh = false) => {
+        const state = get();
+        
+        // Skip if already loading or data exists and not forcing refresh
+        if (state.loading || (!forceRefresh && state.achievements?.length > 0)) {
+          return state.achievements;
+        }
+        
         set({ loading: true, error: null });
         try {
-          console.log('🏆 Calling RewardService.getUserAchievements...');
           const achievementsData = await RewardService.getUserAchievements(userId);
-          console.log('🏆 Achievements data received:', achievementsData);
           set({ 
             achievements: achievementsData,
             loading: false 
@@ -73,14 +86,121 @@ const useRewardsStore = create(
         }
       },
 
+      // OPTIMIZED: Fetch all rewards data in one consolidated API call
+      fetchAllUserRewardsConsolidated: async (userId, forceRefresh = false) => {
+        const state = get();
+        
+        // Check cache validity
+        if (!forceRefresh && state.userRewards?.generatedAt) {
+          const cacheAge = Date.now() - new Date(state.userRewards.generatedAt).getTime();
+          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+          
+          if (cacheAge < CACHE_DURATION) {
+            return { 
+              rewards: state.userRewards, 
+              achievements: state.achievements || state.userRewards.achievements 
+            };
+          }
+        }
+        
+        set({ loading: true, error: null });
+        
+        try {
+          // Single API call to get everything
+          const consolidatedData = await RewardService.getAllUserRewardsConsolidated(userId);
+          
+          set({ 
+            userRewards: {
+              totalPoints: consolidatedData.totalPoints,
+              currentLevel: consolidatedData.currentLevel,
+              pointsToNextLevel: consolidatedData.pointsToNextLevel,
+              currentStreak: consolidatedData.currentStreak,
+              recentRewards: consolidatedData.recentRewards,
+              dailyProgress: consolidatedData.dailyProgress,
+              weeklyProgress: consolidatedData.weeklyProgress,
+              canClaimDailyReward: consolidatedData.canClaimDailyReward,
+              generatedAt: consolidatedData.generatedAt
+            },
+            achievements: consolidatedData.achievements,
+            loading: false 
+          });
+          
+          return { 
+            rewards: {
+              totalPoints: consolidatedData.totalPoints,
+              currentLevel: consolidatedData.currentLevel,
+              pointsToNextLevel: consolidatedData.pointsToNextLevel,
+              currentStreak: consolidatedData.currentStreak,
+              recentRewards: consolidatedData.recentRewards,
+              dailyProgress: consolidatedData.dailyProgress,
+              weeklyProgress: consolidatedData.weeklyProgress,
+              canClaimDailyReward: consolidatedData.canClaimDailyReward,
+              generatedAt: consolidatedData.generatedAt
+            }, 
+            achievements: consolidatedData.achievements 
+          };
+        } catch (error) {
+          console.error('🚀 fetchAllUserRewardsConsolidated error:', error);
+          set({ 
+            error: error.message || 'Failed to fetch consolidated rewards data', 
+            loading: false 
+          });
+          throw error;
+        }
+      },
+
+      // LEGACY: Fetch both rewards and achievements efficiently in parallel (fallback)
+      fetchAllUserRewards: async (userId, forceRefresh = false) => {
+        const state = get();
+        const hasRewards = state.userRewards?.totalPoints !== undefined && state.userRewards.generatedAt;
+        const hasAchievements = state.achievements?.length > 0;
+        
+        // Skip if data exists and not forcing refresh
+        if (!forceRefresh && hasRewards && hasAchievements) {
+          const cacheAge = Date.now() - new Date(state.userRewards.generatedAt).getTime();
+          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+          
+          if (cacheAge < CACHE_DURATION) {
+            return { 
+              rewards: state.userRewards, 
+              achievements: state.achievements 
+            };
+          }
+        }
+        
+        set({ loading: true, error: null });
+        
+        try {
+          // Fetch both in parallel to reduce total API calls
+          const [rewardsData, achievementsData] = await Promise.all([
+            state.userRewards?.totalPoints === undefined || forceRefresh ? 
+              RewardService.getUserRewards(userId) : Promise.resolve(state.userRewards),
+            state.achievements?.length === 0 || forceRefresh ? 
+              RewardService.getUserAchievements(userId) : Promise.resolve(state.achievements)
+          ]);
+          
+          set({ 
+            userRewards: rewardsData,
+            achievements: achievementsData,
+            loading: false 
+          });
+          
+          return { rewards: rewardsData, achievements: achievementsData };
+        } catch (error) {
+          console.error('🎯🏆 fetchAllUserRewards error:', error);
+          set({ 
+            error: error.message || 'Failed to fetch rewards data', 
+            loading: false 
+          });
+          throw error;
+        }
+      },
+
       // Claim daily reward
       claimDailyReward: async () => {
-        console.log('💰 claimDailyReward called');
         set({ loading: true, error: null });
         try {
-          console.log('💰 Calling RewardService.claimReward...');
           const result = await RewardService.claimReward('daily_check_in');
-          console.log('💰 Claim result:', result);
           
           // Update local state
           set((state) => ({

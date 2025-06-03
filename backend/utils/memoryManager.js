@@ -21,34 +21,56 @@ class MemoryManager {
       arrayBuffers: Math.round(usage.arrayBuffers / 1024 / 1024 * 100) / 100 // MB
     };
   }
-
-  // Log memory usage with label
+  // Log memory usage with label (silent in production)
   logMemoryUsage(label = '') {
-    const usage = this.getMemoryUsage();
-    console.log(`📊 Memory Usage ${label}:`, {
-      RSS: `${usage.rss}MB`,
-      HeapTotal: `${usage.heapTotal}MB`,
-      HeapUsed: `${usage.heapUsed}MB`,
-      External: `${usage.external}MB`,
-      ArrayBuffers: `${usage.arrayBuffers}MB`
-    });
+    // Only log in development for debugging
+    if (process.env.NODE_ENV === 'development') {
+      const usage = this.getMemoryUsage();
+      console.log(`📊 Memory Usage ${label}:`, {
+        RSS: `${usage.rss}MB`,
+        HeapTotal: `${usage.heapTotal}MB`,
+        HeapUsed: `${usage.heapUsed}MB`
+      });
+    }
     
-    // Warning if memory usage is high
+    // Still check for warnings in all environments
+    const usage = this.getMemoryUsage();
     if (usage.heapUsed > 512) { // 512MB threshold
       console.warn(`⚠️ High memory usage detected: ${usage.heapUsed}MB`);
     }
-  }
-
-  // Force garbage collection
+  }  // Force garbage collection
   forceGC() {
     try {
       if (global.gc) {
         global.gc();
-        console.log('🗑️ Manual garbage collection triggered');
+        // Only log in development
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🗑️ Manual garbage collection triggered');
+        }
       }
     } catch (error) {
       console.error('Failed to trigger garbage collection:', error);
     }
+  }
+  // Check memory usage and trigger GC if needed
+  checkMemoryAndGC() {
+    const usage = this.getMemoryUsage();
+    
+    // Trigger GC if memory usage exceeds threshold
+    if (usage.heapUsed > 256) { // 256MB threshold
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🚨 High memory usage (${usage.heapUsed}MB), triggering garbage collection`);
+      }
+      this.forceGC();
+      
+      // Log memory after GC only in development
+      if (process.env.NODE_ENV === 'development') {
+        const afterGC = this.getMemoryUsage();
+        console.log(`📉 Memory after GC: ${afterGC.heapUsed}MB (saved ${usage.heapUsed - afterGC.heapUsed}MB)`);
+      }
+    }
+    
+    return usage;
   }
 
   // Memory-aware pagination for large queries
@@ -64,12 +86,7 @@ class MemoryManager {
 
     // Enforce maximum limit to prevent memory issues
     const safeLimit = Math.min(limit, maxLimit);
-    const skip = (page - 1) * safeLimit;
-
-    try {
-      // Log memory before query
-      this.logMemoryUsage(`before ${Model.collection.name} query`);
-
+    const skip = (page - 1) * safeLimit;    try {
       let queryBuilder = Model.find(query)
         .sort(sort)
         .skip(skip)
@@ -155,11 +172,12 @@ class MemoryManager {
         clearInterval(this.gcInterval);
       }
       
-      // Clear mongoose connection pool
-      await mongoose.connection.db.admin().command({ connPoolSync: 1 });
+      // Clear mongoose connection pool      await mongoose.connection.db.admin().command({ connPoolSync: 1 });
       
       this.forceGC();
-      console.log('🧹 Memory cleanup completed');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🧹 Memory cleanup completed');
+      }
     } catch (error) {
       console.error('Memory cleanup error:', error);
     }

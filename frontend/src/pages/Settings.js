@@ -211,11 +211,8 @@ const Settings = React.memo(() => {  const { user, updateUser } = useAuthStore()
           setMessage('Notification permission denied. Please enable in browser settings.');
           setMessageType('error');
           return;
-        }
-
-        // Subscribe to push notifications
+        }        // Subscribe to push notifications
         const result = await notificationService.subscribeToPush();
-        console.log('Push subscription result:', result);
         
         // Batch state updates
         setPushSubscribed(true);

@@ -21,8 +21,6 @@ router.get('/', auth, [
   query('limit').optional().isInt({ min: 1, max: 100 })
 ], validateRequest, async (req, res) => {
   try {
-    memoryManager.logMemoryUsage('doses query start');
-    
     const { 
       startDate, 
       endDate, 
@@ -60,7 +58,14 @@ router.get('/', auth, [
     const [doses, total] = await Promise.all([
       DoseLog.find(query)
         .populate('medication', 'name genericName category form strength')
-        .populate('regimen', 'frequency dosage')
+        .populate({
+          path: 'regimen',
+          select: 'frequency dosage medication',
+          populate: {
+            path: 'medication',
+            select: 'name genericName category form strength'
+          }
+        })
         .sort({ scheduledTime: -1 })
         .skip(skip)
         .limit(safeLimit)
@@ -68,7 +73,6 @@ router.get('/', auth, [
       DoseLog.countDocuments(query)
     ]);
     
-    memoryManager.logMemoryUsage('doses query complete');
     memoryManager.checkMemoryAndGC();
     
     res.json({
@@ -92,8 +96,6 @@ router.get('/', auth, [
 // @access  Private
 router.get('/today', auth, async (req, res) => {
   try {
-    memoryManager.logMemoryUsage('today doses query start');
-    
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
@@ -106,12 +108,18 @@ router.get('/today', auth, async (req, res) => {
       }
     })
     .populate('medication', 'name genericName category form strength')
-    .populate('regimen', 'frequency dosage')
+    .populate({
+      path: 'regimen',
+      select: 'frequency dosage medication',
+      populate: {
+        path: 'medication',
+        select: 'name genericName category form strength'
+      }
+    })
     .sort({ scheduledTime: 1 })
     .limit(50) // Safety limit for today's doses
     .lean();
     
-    memoryManager.logMemoryUsage('today doses query complete');
     memoryManager.checkMemoryAndGC();
     
     res.json({ doses: todayDoses });
@@ -193,7 +201,7 @@ router.post('/log', auth, [
     }
     
     // Create dose log
-    const doseLog = new DoseLog({
+    const doseLogData = {
       user: req.user._id,
       regimen: regimenId,
       medication: regimen.medication._id,
@@ -205,10 +213,16 @@ router.post('/log', auth, [
       sideEffects,
       effectiveness,
       withFood,
-      mood,
       symptoms,
       location
-    });
+    };
+
+    // Only include mood if it's not empty (to avoid enum validation errors)
+    if (mood && mood.trim() !== '') {
+      doseLogData.mood = mood;
+    }
+
+    const doseLog = new DoseLog(doseLogData);
     
     await doseLog.save();
     await doseLog.populate(['medication', 'regimen']);
@@ -265,7 +279,14 @@ router.put('/:id', auth, [
     const oldStatus = doseLog.status;
     
     // Update dose log
-    Object.assign(doseLog, req.body);
+    const updateData = { ...req.body };
+    
+    // Handle mood field to avoid enum validation errors with empty strings
+    if (updateData.mood && updateData.mood.trim() === '') {
+      delete updateData.mood;
+    }
+    
+    Object.assign(doseLog, updateData);
     
     // Update actual time if status changed to taken
     if (req.body.status === 'taken' && !req.body.actualTime) {
@@ -627,7 +648,14 @@ router.get('/missed', auth, [
       scheduledTime: { $gte: startDate }
     })
     .populate('medication', 'name genericName category form strength')
-    .populate('regimen', 'frequency dosage')
+    .populate({
+      path: 'regimen',
+      select: 'frequency dosage medication',
+      populate: {
+        path: 'medication',
+        select: 'name genericName category form strength'
+      }
+    })
     .sort({ scheduledTime: -1 });
     
     // Group by medication
@@ -701,7 +729,14 @@ router.get('/export', auth, [
     
     const doses = await DoseLog.find(query)
       .populate('medication', 'name genericName category form strength')
-      .populate('regimen', 'frequency dosage')
+      .populate({
+        path: 'regimen',
+        select: 'frequency dosage medication',
+        populate: {
+          path: 'medication',
+          select: 'name genericName category form strength'
+        }
+      })
       .sort({ scheduledTime: -1 });
     
     if (format === 'json') {

@@ -8,15 +8,15 @@ const Header = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  const { userRewards, fetchUserRewards, canClaimDailyReward, resetDailyReward } = useRewardsStore();
+  const { userRewards, canClaimDailyReward, resetDailyReward } = useRewardsStore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  // Fetch rewards data when component mounts
+  
+  // Only reset daily reward status, don't fetch data (RewardsCenter will handle that)
   useEffect(() => {
     if (user?._id) {
-      fetchUserRewards(user._id).catch(console.error);
       resetDailyReward();
     }
-  }, [user?._id, fetchUserRewards, resetDailyReward]);
+  }, [user?._id, resetDailyReward]);
 
   const handleLogout = () => {
     logout();

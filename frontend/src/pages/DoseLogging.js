@@ -40,6 +40,11 @@ const DoseLogging = () => {
   const [newSymptom, setNewSymptom] = useState({ name: '', severity: 5 });
   const [showRewards, setShowRewards] = useState(false);
   const [earnedRewards, setEarnedRewards] = useState(null);
+  
+  // Validation states
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [validationWarnings, setValidationWarnings] = useState([]);
+  const [showValidation, setShowValidation] = useState(false);
 
   const [viewMode, setViewMode] = useState('list');
   const [showFilters, setShowFilters] = useState(false);
@@ -54,6 +59,15 @@ const DoseLogging = () => {
     fetchRegimens();
     fetchTodaysDoses();
   }, [fetchRegimens, fetchTodaysDoses]);
+  
+  // Real-time validation effect
+  useEffect(() => {
+    if (selectedDose && showValidation) {
+      const { errors, warnings } = validateDoseForm();
+      setValidationErrors(errors);
+      setValidationWarnings(warnings);
+    }
+  }, [doseForm, selectedDose, showValidation]);
 
   // Helper functions defined before generateTodaySchedule
   const isRegimenActiveToday = useCallback((regimen) => {
@@ -149,9 +163,11 @@ const DoseLogging = () => {
 
   // Helper function to safely get medication name
   const getMedicationName = (dose) => {
+    // Try regimen.medication.name first (for scheduled doses)
     if (dose.regimen?.medication?.name) {
       return dose.regimen.medication.name;
     }
+    // Fall back to direct medication.name (for logged doses)
     if (dose.medication?.name) {
       return dose.medication.name;
     }
@@ -160,10 +176,18 @@ const DoseLogging = () => {
 
   // Helper function to safely get dosage
   const getDosage = (dose) => {
-    const dosage = dose.regimen?.dosage || dose.dosage;
-    if (dosage?.amount && dosage?.unit) {
-      return `${dosage.amount} ${dosage.unit}`;
+    // Try regimen.dosage first (for scheduled doses)
+    const regimenDosage = dose.regimen?.dosage;
+    if (regimenDosage?.amount && regimenDosage?.unit) {
+      return `${regimenDosage.amount} ${regimenDosage.unit}`;
     }
+    
+    // Fall back to direct dosage (for logged doses)
+    const directDosage = dose.dosage;
+    if (directDosage?.amount && directDosage?.unit) {
+      return `${directDosage.amount} ${directDosage.unit}`;
+    }
+    
     return 'Standard dose';
   };
 
@@ -281,8 +305,93 @@ const DoseLogging = () => {
         location: ''
       });
     }
-  };  const submitDoseLog = async () => {
-    if (!selectedDose) return;
+  };  // Enhanced validation function
+  const validateDoseForm = () => {
+    const errors = [];
+    const warnings = [];
+    
+    // Required: Status is always required
+    if (!doseForm.status) {
+      errors.push('❌ Please select a status for this dose (Required)');
+    }
+    
+    // Validate status value
+    if (doseForm.status && !['taken', 'missed', 'skipped', 'delayed'].includes(doseForm.status)) {
+      errors.push('❌ Invalid status selected');
+    }
+    
+    // For taken doses, validate additional required fields
+    if (doseForm.status === 'taken') {
+      // Effectiveness rating is required for taken doses
+      if (!doseForm.effectiveness?.rating || doseForm.effectiveness.rating < 1 || doseForm.effectiveness.rating > 5) {
+        errors.push('❌ Please rate the effectiveness of this dose (1-5) (Required)');
+      }
+      
+      // With food selection is recommended but not required
+      if (doseForm.withFood === null || doseForm.withFood === undefined) {
+        warnings.push('⚠️ Consider indicating if taken with food');
+      }
+    }
+    
+    // Validate optional fields if provided
+    if (doseForm.notes && doseForm.notes.length > 500) {
+      errors.push('❌ Notes cannot exceed 500 characters');
+    }
+    
+    if (doseForm.sideEffects && !Array.isArray(doseForm.sideEffects)) {
+      errors.push('❌ Side effects must be properly formatted');
+    }
+    
+    if (doseForm.symptoms && !Array.isArray(doseForm.symptoms)) {
+      errors.push('❌ Symptoms must be properly formatted');
+    }
+    
+    // Validate side effects array
+    if (doseForm.sideEffects && doseForm.sideEffects.some(effect => !effect || effect.trim() === '')) {
+      errors.push('❌ Please remove empty side effects or fill them in');
+    }
+    
+    // Validate symptoms array
+    if (doseForm.symptoms && doseForm.symptoms.some(symptom => !symptom.name || symptom.name.trim() === '')) {
+      errors.push('❌ Please remove empty symptoms or fill them in');
+    }
+    
+    return { errors, warnings };
+  };
+
+  const submitDoseLog = async () => {
+    if (!selectedDose) {
+      alert('❌ No dose selected for logging');
+      return;
+    }
+    
+    // Validate required dose data
+    if (!selectedDose.regimen) {
+      alert('❌ Invalid dose data: missing regimen information');
+      return;
+    }
+    
+    if (!selectedDose.scheduledTime) {
+      alert('❌ Invalid dose data: missing scheduled time');
+      return;
+    }
+    
+    // Validate form before submission
+    const { errors, warnings } = validateDoseForm();
+    
+    if (errors.length > 0) {
+      const errorMessage = 'Please fix the following issues before submitting:\n\n' + errors.join('\n');
+      alert(errorMessage);
+      return;
+    }
+    
+    // Show warnings but allow submission
+    if (warnings.length > 0) {
+      const warningMessage = 'Please note:\n\n' + warnings.join('\n') + '\n\nDo you want to continue?';
+      if (!window.confirm(warningMessage)) {
+        return;
+      }
+    }
     
     try {
       let loggedDose;
@@ -519,7 +628,7 @@ const DoseLogging = () => {
                                     {getMedicationName(dose)}
                                   </div>
                                   <div className="text-xs text-gray-500 dark:text-gray-400">
-                                    {formatDosage(dose)} • {formatTime(dose.scheduledTime)}
+                                    {getDosage(dose)} • {formatTime(dose.scheduledTime)}
                                   </div>
                                   {dose.status === 'taken' && (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 mt-1">
@@ -674,7 +783,7 @@ const DoseLogging = () => {
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
                   >
                     <option value="all">All Medications</option>
-                    {[...new Set(todaySchedule.map(dose => dose.regimen?.medication?.name || dose.medication?.name).filter(Boolean))].map(medName => (
+                    {[...new Set(todaySchedule.map(dose => getMedicationName(dose)).filter(Boolean))].map(medName => (
                       <option key={medName} value={medName}>{medName}</option>
                     ))}
                   </select>
@@ -744,18 +853,17 @@ const DoseLogging = () => {
                       
                       {/* Dose Information */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                            {dose.regimen?.medication?.name || 'Medication'}
-                          </h3>
-                          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                            {formatTime(dose.scheduledTime)}
-                          </span>
-                        </div>
-                        
-                        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                          {dose.regimen?.dosage?.amount} {dose.regimen?.dosage?.unit}
-                        </p>
+                        <div className="flex items-center justify-between">                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                          {getMedicationName(dose)}
+                        </h3>
+                        <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                          {formatTime(dose.scheduledTime)}
+                        </span>
+                      </div>
+                      
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                        {getDosage(dose)}
+                      </p>
                         
                         {dose.status === 'taken' && (
                           <div className="mt-2 flex items-center space-x-2">
@@ -838,35 +946,36 @@ const DoseLogging = () => {
         </div>
       </div>
 
-      {/* Late Warning Modal */}
+      {/* Late Warning Modal - Improved Dark Mode */}
       {showLateWarning && selectedDose && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="max-w-md w-full p-6">
+          <Card className="max-w-md w-full p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
             <div className="text-center">
-              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 mb-4">
-                <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 dark:bg-orange-900/30 mb-4">
+                <svg className="h-6 w-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.732 15.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
               </div>
               
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
                 {selectedDose.isOutsideWindow ? 'Too Late to Log' : 'Late Dose Warning'}
               </h3>
               
-              <p className="text-sm text-gray-500 mb-4">
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
                 {selectedDose.isOutsideWindow ? 
                   `This dose was scheduled ${selectedDose.minutesLate} minutes ago, which is outside the 4-hour logging window. You can still log it as missed.` :
                   `This dose was scheduled ${selectedDose.minutesLate} minutes ago. You can still log it, but it will be marked as late.`
                 }
               </p>
               
-              <div className="flex space-x-3">
+              <div className="flex space-x-3 justify-center">
                 <Button
                   variant="outline"
                   onClick={() => {
                     setShowLateWarning(false);
                     setSelectedDose(null);
                   }}
+                  className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
                 >
                   Cancel
                 </Button>
@@ -877,7 +986,7 @@ const DoseLogging = () => {
                       setDoseForm(prev => ({ ...prev, status: 'missed' }));
                       setShowLateWarning(false);
                     }}
-                    className="bg-red-600 hover:bg-red-700"
+                    className="bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 text-white border-0"
                   >
                     Mark as Missed
                   </Button>
@@ -886,7 +995,7 @@ const DoseLogging = () => {
                     onClick={() => {
                       setShowLateWarning(false);
                     }}
-                    className="bg-orange-600 hover:bg-orange-700"
+                    className="bg-orange-600 hover:bg-orange-700 dark:bg-orange-700 dark:hover:bg-orange-800 text-white border-0"
                   >
                     Log as Late
                   </Button>
@@ -897,17 +1006,22 @@ const DoseLogging = () => {
         </div>
       )}
 
-      {/* Dose Logging Modal */}
+      {/* Dose Logging Modal - Improved Dark Mode and Validation */}
       {selectedDose && !showLateWarning && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <Card className="max-w-2xl w-full p-6 max-h-screen overflow-y-auto">
+          <Card className="max-w-2xl w-full p-6 max-h-screen overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-medium text-gray-900">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 Log Dose: {getMedicationName(selectedDose)}
               </h3>
               <button
-                onClick={() => setSelectedDose(null)}
-                className="text-gray-400 hover:text-gray-600"
+                onClick={() => {
+                  setSelectedDose(null);
+                  setShowValidation(false);
+                  setValidationErrors([]);
+                  setValidationWarnings([]);
+                }}
+                className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
@@ -915,38 +1029,78 @@ const DoseLogging = () => {
               </button>
             </div>
 
+            {/* Validation Display */}
+            {showValidation && (validationErrors.length > 0 || validationWarnings.length > 0) && (
+              <div className="mb-6 space-y-3">
+                {validationErrors.length > 0 && (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <h4 className="text-sm font-semibold text-red-800 dark:text-red-300 mb-2">
+                      Required Fields Missing:
+                    </h4>
+                    <ul className="text-sm text-red-700 dark:text-red-300 space-y-1">
+                      {validationErrors.map((error, index) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {validationWarnings.length > 0 && (
+                  <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                    <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-300 mb-2">
+                      Recommendations:
+                    </h4>
+                    <ul className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                      {validationWarnings.map((warning, index) => (
+                        <li key={index}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-6">
               {/* Status */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Status
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  Status <span className="text-red-500">*</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">(Required)</span>
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-3">
                   {['taken', 'missed', 'skipped'].map(status => (
                     <button
                       key={status}
                       type="button"
-                      onClick={() => setDoseForm(prev => ({ ...prev, status }))}
-                      className={`p-3 rounded-lg border text-center ${
+                      onClick={() => {
+                        setDoseForm(prev => ({ ...prev, status }));
+                        setShowValidation(true);
+                      }}
+                      className={`p-4 rounded-lg border-2 text-center font-medium transition-all duration-200 ${
                         doseForm.status === status
-                          ? 'border-medical-500 bg-medical-50 text-medical-700'
-                          : 'border-gray-300 hover:border-gray-400'
+                          ? 'border-medical-500 bg-medical-50 dark:bg-medical-900/30 text-medical-700 dark:text-medical-300 shadow-md'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'
                       }`}
                     >
                       {status.charAt(0).toUpperCase() + status.slice(1)}
                     </button>
                   ))}
                 </div>
+                {showValidation && !doseForm.status && (
+                  <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                    ❌ Please select a status for this dose
+                  </p>
+                )}
               </div>
 
               {doseForm.status === 'taken' && (
                 <>
                   {/* Effectiveness */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      How effective was this dose? (1-5)
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                      How effective was this dose? (1-5) <span className="text-red-500">*</span>
                     </label>
-                    <div className="flex space-x-2">
+                    <div className="flex space-x-3 justify-center">
                       {[1, 2, 3, 4, 5].map(rating => (
                         <button
                           key={rating}
@@ -955,10 +1109,10 @@ const DoseLogging = () => {
                             ...prev,
                             effectiveness: { ...prev.effectiveness, rating }
                           }))}
-                          className={`w-10 h-10 rounded-full border ${
+                          className={`w-12 h-12 rounded-full border-2 font-semibold transition-all duration-200 ${
                             doseForm.effectiveness.rating === rating
-                              ? 'border-medical-500 bg-medical-500 text-white'
-                              : 'border-gray-300 hover:border-gray-400'
+                              ? 'border-medical-500 bg-medical-500 text-white shadow-lg transform scale-110'
+                              : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'
                           }`}
                         >
                           {rating}
@@ -969,73 +1123,74 @@ const DoseLogging = () => {
 
                   {/* Mood */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                       Mood
                     </label>
                     <select
                       value={doseForm.mood}
                       onChange={(e) => setDoseForm(prev => ({ ...prev, mood: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
+                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors"
                     >
-                      <option value="">Select mood</option>
-                      <option value="excellent">Excellent</option>
-                      <option value="good">Good</option>
-                      <option value="okay">Okay</option>
-                      <option value="poor">Poor</option>
-                      <option value="terrible">Terrible</option>
+                      <option value="">Select mood (optional)</option>
+                      <option value="excellent">😄 Excellent</option>
+                      <option value="good">😊 Good</option>
+                      <option value="okay">😐 Okay</option>
+                      <option value="poor">😞 Poor</option>
+                      <option value="terrible">😫 Terrible</option>
                     </select>
                   </div>
 
                   {/* With Food */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                       Taken with food?
                     </label>
-                    <div className="flex space-x-4">
+                    <div className="flex space-x-4 justify-center">
                       <button
                         type="button"
                         onClick={() => setDoseForm(prev => ({ ...prev, withFood: true }))}
-                        className={`px-4 py-2 rounded-md border ${
+                        className={`px-6 py-3 rounded-lg border-2 font-medium transition-all duration-200 ${
                           doseForm.withFood === true
-                            ? 'border-medical-500 bg-medical-50 text-medical-700'
-                            : 'border-gray-300 hover:border-gray-400'
+                            ? 'border-medical-500 bg-medical-50 dark:bg-medical-900/30 text-medical-700 dark:text-medical-300'
+                            : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'
                         }`}
                       >
-                        Yes
+                        🍽️ Yes
                       </button>
                       <button
                         type="button"
                         onClick={() => setDoseForm(prev => ({ ...prev, withFood: false }))}
-                        className={`px-4 py-2 rounded-md border ${
+                        className={`px-6 py-3 rounded-lg border-2 font-medium transition-all duration-200 ${
                           doseForm.withFood === false
-                            ? 'border-medical-500 bg-medical-50 text-medical-700'
-                            : 'border-gray-300 hover:border-gray-400'
+                            ? 'border-medical-500 bg-medical-50 dark:bg-medical-900/30 text-medical-700 dark:text-medical-300'
+                            : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'
                         }`}
                       >
-                        No
+                        🚫 No
                       </button>
                     </div>
                   </div>
 
                   {/* Side Effects */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Side Effects
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                      🩹 Side Effects
                     </label>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <div className="flex gap-2">
                         <input
                           type="text"
                           value={newSideEffect}
                           onChange={(e) => setNewSideEffect(e.target.value)}
                           placeholder="Add a side effect"
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
+                          className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors"
                         />
                         <Button 
                           type="button" 
                           onClick={addSideEffect}
                           variant="outline"
                           size="sm"
+                          className="px-4 py-3"
                         >
                           Add
                         </Button>
@@ -1046,13 +1201,13 @@ const DoseLogging = () => {
                           {doseForm.sideEffects.map((effect, index) => (
                             <span
                               key={index}
-                              className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-red-100 text-red-800"
+                              className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-800"
                             >
                               {effect}
                               <button
                                 type="button"
                                 onClick={() => removeSideEffect(index)}
-                                className="ml-2 text-red-600 hover:text-red-800"
+                                className="ml-2 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 transition-colors"
                               >
                                 ×
                               </button>
@@ -1065,22 +1220,22 @@ const DoseLogging = () => {
 
                   {/* Symptoms */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Symptoms
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                      🌡️ Symptoms
                     </label>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <div className="flex gap-2">
                         <input
                           type="text"
                           value={newSymptom.name}
                           onChange={(e) => setNewSymptom(prev => ({ ...prev, name: e.target.value }))}
                           placeholder="Symptom name"
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
+                          className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors"
                         />
                         <select
                           value={newSymptom.severity}
                           onChange={(e) => setNewSymptom(prev => ({ ...prev, severity: parseInt(e.target.value) }))}
-                          className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
+                          className="px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors"
                         >
                           {[1,2,3,4,5,6,7,8,9,10].map(i => (
                             <option key={i} value={i}>{i}</option>
@@ -1091,6 +1246,7 @@ const DoseLogging = () => {
                           onClick={addSymptom}
                           variant="outline"
                           size="sm"
+                          className="px-4 py-3"
                         >
                           Add
                         </Button>
@@ -1112,13 +1268,13 @@ const DoseLogging = () => {
                             {validSymptoms.map((symptom, index) => (
                               <div
                                 key={`symptom-${index}-${symptom.name}`}
-                                className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                                className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600"
                               >
-                                <span>{symptom.name} (Severity: {symptom.severity}/10)</span>
+                                <span className="text-gray-900 dark:text-white">{symptom.name} (Severity: {symptom.severity}/10)</span>
                                 <button
                                   type="button"
                                   onClick={() => removeSymptom(index)}
-                                  className="text-red-600 hover:text-red-800"
+                                  className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 transition-colors font-bold"
                                 >
                                   ×
                                 </button>
@@ -1134,32 +1290,60 @@ const DoseLogging = () => {
 
               {/* Notes */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Notes
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  📝 Notes
                 </label>
                 <textarea
                   value={doseForm.notes}
                   onChange={(e) => setDoseForm(prev => ({ ...prev, notes: e.target.value }))}
                   placeholder="Any additional notes..."
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-medical-500"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors placeholder-gray-400 dark:placeholder-gray-500 resize-none"
+                />
+              </div>
+
+              {/* Location */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  📍 Location
+                </label>
+                <input
+                  type="text"
+                  value={doseForm.location}
+                  onChange={(e) => setDoseForm(prev => ({ ...prev, location: e.target.value }))}
+                  placeholder="Where did you take this dose? (optional)"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 dark:focus:ring-medical-400 transition-colors placeholder-gray-400 dark:placeholder-gray-500"
                 />
               </div>
             </div>
 
             {/* Submit Button */}
-            <div className="flex justify-end space-x-3 mt-6 pt-6 border-t">
+            <div className="flex justify-end space-x-3 mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
               <Button
                 variant="outline"
                 onClick={() => setSelectedDose(null)}
+                className="px-6 py-3 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
                 Cancel
               </Button>
               <Button
                 onClick={submitDoseLog}
                 disabled={doseLoading}
+                className="px-6 py-3 bg-medical-600 hover:bg-medical-700 dark:bg-medical-700 dark:hover:bg-medical-800 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
               >
-                {doseLoading ? <LoadingSpinner size="sm" /> : 'Log Dose'}
+                {doseLoading ? (
+                  <div className="flex items-center space-x-2">
+                    <LoadingSpinner size="sm" />
+                    <span>Logging...</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Log Dose</span>
+                  </div>
+                )}
               </Button>
             </div>
           </Card>

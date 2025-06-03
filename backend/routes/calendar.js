@@ -5,6 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const Regimen = require('../models/Regimen');
 const DoseLog = require('../models/DoseLog');
+const memoryManager = require('../utils/memoryManager');
 
 const router = express.Router();
 
@@ -33,11 +34,8 @@ router.get('/google/auth-url', auth, async (req, res) => {
       access_type: 'offline',
       scope: scopes,
       state: req.user._id.toString(), // Pass user ID for security
-    });
-
-    res.json({ authUrl });
+    });    res.json({ authUrl });
   } catch (error) {
-    console.error('Google auth URL error:', error);
     res.status(500).json({ message: 'Failed to generate auth URL' });
   }
 });
@@ -78,24 +76,30 @@ router.post('/google/callback', auth, [
         id: cal.id,
         summary: cal.summary,
         primary: cal.primary
-      }))
-    });
+      }))    });
   } catch (error) {
-    console.error('Google callback error:', error);
     res.status(500).json({ message: 'Failed to connect Google Calendar' });
   }
 });
 
 // @route   GET /api/calendar/status
-// @desc    Check Google Calendar connection status
+// @desc    Check Google Calendar connection status (OPTIMIZED)
 // @access  Private
-router.get('/status', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id);
+router.get('/status', auth, async (req, res) => {  try {
+    const startTime = Date.now();
     
-    const isConnected = user.googleCalendar?.isConnected && 
-                       user.googleCalendar?.accessToken &&
-                       (!user.googleCalendar?.tokenExpiry || user.googleCalendar.tokenExpiry > Date.now());
+    // Optimized query - only fetch required fields
+    const user = await User.findById(req.user._id)
+      .select('googleCalendar.isConnected googleCalendar.accessToken googleCalendar.tokenExpiry googleCalendar.connectedAt googleCalendar.settings')
+      .lean();
+    
+    // Fast connection check without unnecessary operations
+    const hasValidToken = user.googleCalendar?.accessToken && 
+                         (!user.googleCalendar?.tokenExpiry || user.googleCalendar.tokenExpiry > Date.now());
+    const isConnected = user.googleCalendar?.isConnected && hasValidToken;
+
+    const responseTime = Date.now() - startTime;
+    memoryManager.checkMemoryAndGC();
 
     res.json({
       isConnected,
@@ -104,11 +108,17 @@ router.get('/status', auth, async (req, res) => {
         syncEnabled: true,
         reminderMinutes: [10, 60],
         calendarId: 'primary'
-      }
+      },
+      // Performance metrics
+      responseTimeMs: responseTime,
+      cacheRecommendation: 'cache-for-2min'
     });
   } catch (error) {
-    console.error('Calendar status error:', error);
-    res.status(500).json({ message: 'Failed to check calendar status' });
+    console.error('Calendar status check error:', error);
+    res.status(500).json({ 
+      message: 'Failed to check calendar status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -120,13 +130,18 @@ router.post('/sync-regimen/:regimenId', auth, async (req, res) => {
     const regimen = await Regimen.findOne({
       _id: req.params.regimenId,
       user: req.user._id
-    }).populate('medication');
+    })
+    .populate('medication', 'name')
+    .lean();
 
     if (!regimen) {
       return res.status(404).json({ message: 'Regimen not found' });
     }
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id)
+      .select('googleCalendar')
+      .lean();
+      
     if (!user.googleCalendar?.isConnected) {
       return res.status(400).json({ message: 'Google Calendar not connected' });
     }
@@ -144,21 +159,28 @@ router.post('/sync-regimen/:regimenId', auth, async (req, res) => {
     const events = generateCalendarEvents(regimen, 30);
     const createdEvents = [];
 
-    for (const event of events) {
-      try {
-        const response = await calendar.events.insert({
-          calendarId,
-          resource: event
-        });
-        createdEvents.push({
-          googleEventId: response.data.id,
-          scheduledTime: event.start.dateTime,
-          regimen: regimen._id
-        });
-      } catch (eventError) {
-        console.error('Failed to create calendar event:', eventError);
-      }
-    }
+    // Process events in batches to manage memory and API rate limits
+    await memoryManager.processInBatches(events, 5, async (eventBatch) => {
+      const batchResults = await Promise.all(
+        eventBatch.map(async (event) => {
+          try {
+            const response = await calendar.events.insert({
+              calendarId,
+              resource: event
+            });
+            return {
+              googleEventId: response.data.id,
+              scheduledTime: event.start.dateTime,
+              regimen: regimen._id
+            };
+          } catch (eventError) {
+            return null;
+          }
+        })
+      );
+      
+      return batchResults.filter(result => result !== null);
+    });
 
     // Update regimen with calendar sync info
     await Regimen.findByIdAndUpdate(regimen._id, {
@@ -167,12 +189,13 @@ router.post('/sync-regimen/:regimenId', auth, async (req, res) => {
       'calendarSync.eventIds': createdEvents.map(e => e.googleEventId)
     });
 
+    memoryManager.checkMemoryAndGC();
+
     res.json({
       message: `Successfully synced ${createdEvents.length} events to Google Calendar`,
       eventsCreated: createdEvents.length
     });
   } catch (error) {
-    console.error('Sync regimen error:', error);
     res.status(500).json({ message: 'Failed to sync regimen to calendar' });
   }
 });
@@ -182,35 +205,48 @@ router.post('/sync-regimen/:regimenId', auth, async (req, res) => {
 // @access  Private
 router.post('/sync-all', auth, async (req, res) => {
   try {
+    memoryManager.checkMemoryAndGC();
+    
     const regimens = await Regimen.find({
       user: req.user._id,
       isActive: true
-    }).populate('medication');
+    })
+    .populate('medication', 'name')
+    .lean();
 
     let totalEvents = 0;
     const results = [];
 
-    for (const regimen of regimens) {
-      try {
-        // Call sync-regimen logic for each regimen
-        const syncResult = await syncSingleRegimen(regimen, req.user._id);
-        results.push({
-          regimenId: regimen._id,
-          medicationName: regimen.medication.name,
-          eventsCreated: syncResult.eventsCreated,
-          success: true
-        });
-        totalEvents += syncResult.eventsCreated;
-      } catch (error) {
-        results.push({
-          regimenId: regimen._id,
-          medicationName: regimen.medication.name,
-          eventsCreated: 0,
-          success: false,
-          error: error.message
-        });
-      }
-    }
+    // Process regimens in batches to manage memory
+    await memoryManager.processInBatches(regimens, 3, async (regimenBatch) => {
+      const batchResults = await Promise.all(
+        regimenBatch.map(async (regimen) => {
+          try {
+            const syncResult = await syncSingleRegimen(regimen, req.user._id);
+            totalEvents += syncResult.eventsCreated;
+            return {
+              regimenId: regimen._id,
+              medicationName: regimen.medication.name,
+              eventsCreated: syncResult.eventsCreated,
+              success: true
+            };
+          } catch (error) {
+            return {
+              regimenId: regimen._id,
+              medicationName: regimen.medication.name,
+              eventsCreated: 0,
+              success: false,
+              error: error.message
+            };
+          }
+        })
+      );
+      
+      results.push(...batchResults);
+      return batchResults;
+    });
+
+    memoryManager.checkMemoryAndGC();
 
     res.json({
       message: `Sync completed: ${totalEvents} total events created`,
@@ -218,7 +254,6 @@ router.post('/sync-all', auth, async (req, res) => {
       results
     });
   } catch (error) {
-    console.error('Sync all error:', error);
     res.status(500).json({ message: 'Failed to sync regimens to calendar' });
   }
 });
@@ -231,13 +266,18 @@ router.delete('/regimen/:regimenId', auth, async (req, res) => {
     const regimen = await Regimen.findOne({
       _id: req.params.regimenId,
       user: req.user._id
-    });
+    })
+    .select('calendarSync')
+    .lean();
 
     if (!regimen) {
       return res.status(404).json({ message: 'Regimen not found' });
     }
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id)
+      .select('googleCalendar')
+      .lean();
+      
     if (!user.googleCalendar?.isConnected) {
       return res.status(400).json({ message: 'Google Calendar not connected' });
     }
@@ -251,20 +291,30 @@ router.delete('/regimen/:regimenId', auth, async (req, res) => {
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     const calendarId = user.googleCalendar.settings?.calendarId || 'primary';
 
-    // Delete existing events
+    // Delete existing events in batches
     const eventIds = regimen.calendarSync?.eventIds || [];
     let deletedCount = 0;
 
-    for (const eventId of eventIds) {
-      try {
-        await calendar.events.delete({
-          calendarId,
-          eventId
-        });
-        deletedCount++;
-      } catch (error) {
-        console.error('Failed to delete calendar event:', error);
-      }
+    if (eventIds.length > 0) {
+      await memoryManager.processInBatches(eventIds, 5, async (eventIdBatch) => {
+        const batchResults = await Promise.all(
+          eventIdBatch.map(async (eventId) => {
+            try {
+              await calendar.events.delete({
+                calendarId,
+                eventId
+              });
+              return true;
+            } catch (error) {
+              return false;
+            }
+          })
+        );
+        
+        const successCount = batchResults.filter(result => result).length;
+        deletedCount += successCount;
+        return batchResults;
+      });
     }
 
     // Update regimen to remove calendar sync
@@ -272,12 +322,13 @@ router.delete('/regimen/:regimenId', auth, async (req, res) => {
       $unset: { calendarSync: 1 }
     });
 
+    memoryManager.checkMemoryAndGC();
+
     res.json({
       message: `Removed ${deletedCount} events from Google Calendar`,
       eventsDeleted: deletedCount
     });
   } catch (error) {
-    console.error('Remove regimen error:', error);
     res.status(500).json({ message: 'Failed to remove regimen from calendar' });
   }
 });
@@ -304,11 +355,8 @@ router.put('/settings', auth, [
         reminderMinutes,
         calendarId: calendarId || 'primary'
       }
-    });
-
-    res.json({ message: 'Calendar settings updated successfully' });
+    });    res.json({ message: 'Calendar settings updated successfully' });
   } catch (error) {
-    console.error('Update settings error:', error);
     res.status(500).json({ message: 'Failed to update calendar settings' });
   }
 });
@@ -320,11 +368,8 @@ router.delete('/disconnect', auth, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, {
       $unset: { googleCalendar: 1 }
-    });
-
-    res.json({ message: 'Google Calendar disconnected successfully' });
+    });    res.json({ message: 'Google Calendar disconnected successfully' });
   } catch (error) {
-    console.error('Disconnect error:', error);
     res.status(500).json({ message: 'Failed to disconnect Google Calendar' });
   }
 });
@@ -335,7 +380,9 @@ router.delete('/disconnect', auth, async (req, res) => {
 router.get('/upcoming', auth, async (req, res) => {
   try {
     const { days = 7 } = req.query;
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id)
+      .select('googleCalendar')
+      .lean();
 
     if (!user.googleCalendar?.isConnected) {
       return res.status(400).json({ message: 'Google Calendar not connected' });
@@ -359,8 +406,11 @@ router.get('/upcoming', auth, async (req, res) => {
       timeMax,
       q: 'medication reminder', // Search for medication events
       singleEvents: true,
-      orderBy: 'startTime'
+      orderBy: 'startTime',
+      maxResults: 100 // Limit results for performance
     });
+
+    memoryManager.checkMemoryAndGC();
 
     res.json({
       events: response.data.items.map(event => ({
@@ -373,7 +423,6 @@ router.get('/upcoming', auth, async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('Get upcoming events error:', error);
     res.status(500).json({ message: 'Failed to get upcoming events' });
   }
 });
@@ -452,9 +501,12 @@ function shouldTakeToday(regimen, date) {
   }
 }
 
-// Helper function to sync a single regimen (for sync-all)
+// Helper function to sync a single regimen (for sync-all) - Memory optimized
 async function syncSingleRegimen(regimen, userId) {
-  const user = await User.findById(userId);
+  const user = await User.findById(userId)
+    .select('googleCalendar')
+    .lean();
+    
   const oauth2Client = getOAuth2Client();
   oauth2Client.setCredentials({
     access_token: user.googleCalendar.accessToken,
@@ -467,17 +519,26 @@ async function syncSingleRegimen(regimen, userId) {
   const events = generateCalendarEvents(regimen, 30);
   const createdEvents = [];
 
-  for (const event of events) {
-    try {
-      const response = await calendar.events.insert({
-        calendarId,
-        resource: event
-      });
-      createdEvents.push(response.data.id);
-    } catch (error) {
-      console.error('Failed to create calendar event:', error);
-    }
-  }
+  // Process events in smaller batches to manage memory
+  await memoryManager.processInBatches(events, 3, async (eventBatch) => {
+    const batchResults = await Promise.all(
+      eventBatch.map(async (event) => {
+        try {
+          const response = await calendar.events.insert({
+            calendarId,
+            resource: event
+          });
+          return response.data.id;
+        } catch (error) {
+          return null;
+        }
+      })
+    );
+    
+    const validIds = batchResults.filter(id => id !== null);
+    createdEvents.push(...validIds);
+    return validIds;
+  });
 
   // Update regimen with calendar sync info
   await Regimen.findByIdAndUpdate(regimen._id, {

@@ -17,11 +17,11 @@ router.get('/adherence-stats', auth, [
 ], validateRequest, async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    
+
     // Calculate date ranges based on period
     const today = new Date();
     let startDate, previousStartDate, previousEndDate;
-    
+
     switch (period) {
       case 'week':
         startDate = new Date(today);
@@ -48,22 +48,22 @@ router.get('/adherence-stats', auth, [
         previousEndDate.setDate(previousEndDate.getDate() - 1);
         break;
     }
-    
+
     // Get current period stats
     const currentStats = await DoseLog.getAdherenceStats(req.user._id, startDate, today);
-    
+
     // Get previous period stats for comparison
     const previousStats = await DoseLog.getAdherenceStats(req.user._id, previousStartDate, previousEndDate);
-    
+
     // Calculate trends (change from previous period)
     const adherenceTrend = Math.round((currentStats.adherenceRate - previousStats.adherenceRate) * 10) / 10;
     const takenOnTimeTrend = Math.round((currentStats.takenOnTimeRate - previousStats.takenOnTimeRate) * 10) / 10;
     const missedTrend = Math.round((currentStats.missedRate - previousStats.missedRate) * 10) / 10;
     const takenLateTrend = Math.round((currentStats.takenLateRate - previousStats.takenLateRate) * 10) / 10;
-    
+
     // Get streak information
     const streakInfo = await DoseLog.getStreakInfo(req.user._id);
-    
+
     // Format the response
     const responseData = {
       overallAdherence: Math.round(currentStats.adherenceRate * 10) / 10,
@@ -78,7 +78,7 @@ router.get('/adherence-stats', auth, [
       takenLateTrend,
       streakInfo
     };
-    
+
     return res.json(responseData);
   } catch (error) {
     console.error('Error fetching adherence stats:', error);
@@ -99,32 +99,30 @@ router.get('/adherence', auth, [
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(23, 59, 59, 999);
-    
-    const { 
+
+    const {
       startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
       endDate = new Date(),
-      format = 'json' 
+      format = 'json'
     } = req.query;
-    
+
     const start = new Date(startDate);
     let end = new Date(endDate);
-    
+
     // Ensure end date doesn't exceed tomorrow
     if (end > tomorrow) {
-      end = tomorrow;
-    }
-      // Get overall stats with memory monitoring
-    memoryManager.logMemoryUsage('before adherence stats query');
+      end = tomorrow;    }
+    // Get overall stats
     const overallStats = await DoseLog.getAdherenceStats(req.user._id, start, end);
-    memoryManager.logMemoryUsage('after adherence stats query');
-    
+
     // Get medication-specific stats using memory-safe aggregation
     const medicationStatsPipeline = [
       {
         $match: {
           user: req.user._id,
           scheduledTime: { $gte: start, $lte: end }
-        }      },
+        }
+      },
       {
         $lookup: {
           from: 'medications',
@@ -166,12 +164,12 @@ router.get('/adherence', auth, [
         $sort: { adherencePercentage: -1 }
       }
     ];
-    
+
     const medicationStats = await memoryManager.safeAggregate(DoseLog, medicationStatsPipeline, {
       maxResults: 100,  // Limit results to prevent memory issues
       chunkSize: 50
     });
-      // Get daily adherence data for chart using memory-safe aggregation
+    // Get daily adherence data for chart using memory-safe aggregation
     const dailyAdherencePipeline = [
       {
         $match: {
@@ -204,7 +202,7 @@ router.get('/adherence', auth, [
         $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 }
       }
     ];
-    
+
     const dailyAdherence = await memoryManager.safeAggregate(DoseLog, dailyAdherencePipeline, {
       maxResults: 365,  // Limit to 1 year of data
       chunkSize: 30
@@ -243,15 +241,15 @@ router.get('/adherence', auth, [
         $limit: 5
       }
     ];
-    
+
     const missedMedications = await memoryManager.safeAggregate(DoseLog, missedMedicationsPipeline, {
       maxResults: 20,
       chunkSize: 10
     });
-    
+
     // Force garbage collection after heavy aggregations
     memoryManager.forceGC();
-    
+
     const report = {
       reportPeriod: {
         startDate: start,
@@ -264,32 +262,32 @@ router.get('/adherence', auth, [
       missedMedications,
       generatedAt: new Date()
     };
-    
+
     if (format === 'csv') {
       // Convert to CSV format
       let csv = 'Date,Total Doses,Adherence Percentage\n';
       dailyAdherence.forEach(day => {
         csv += `${day.date},${day.totalDoses},${day.adherencePercentage.toFixed(2)}\n`;
       });
-      
+
       res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=adherence-report.csv');      return res.send(csv);
+      res.setHeader('Content-Disposition', 'attachment; filename=adherence-report.csv'); return res.send(csv);
     } else if (format === 'pdf') {
       // Transform data to match PDFService expectations
       const pdfData = {
         reportPeriod: report.reportPeriod,
-        
+
         // Map overallStats to top-level properties
         overallAdherence: report.overallStats?.adherenceRate || 0,
         totalDoses: report.overallStats?.totalDoses || 0,
         takenDoses: report.overallStats?.takenDoses || 0,
         missedDoses: report.overallStats?.missedDoses || 0,
         skippedDoses: report.overallStats?.skippedDoses || 0,
-        
+
         // Add streak information (placeholder for now)
         currentStreak: 0,
         bestStreak: 0,
-        
+
         // Map medication stats to medicationBreakdown
         medicationBreakdown: report.medicationStats?.map(med => ({
           medicationName: med.medicationName,
@@ -298,7 +296,7 @@ router.get('/adherence', auth, [
           dossesMissed: med.missedDoses,
           totalDoses: med.totalDoses
         })) || [],
-        
+
         // Add daily adherence as weeklyTrends for now
         weeklyTrends: report.dailyAdherence?.slice(0, 12).map((day, index) => ({
           weekStart: day.date,
@@ -308,15 +306,15 @@ router.get('/adherence', auth, [
           totalDoses: day.totalDoses
         })) || []
       };
-      
+
       // Generate PDF report
       const pdfBuffer = await pdfService.generateAdherenceReport(pdfData);
-      
+
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename=adherence-report.pdf');
       return res.end(pdfBuffer);
     }
-    
+
     res.json(report);
   } catch (error) {
     console.error('Get adherence report error:', error);
@@ -332,13 +330,13 @@ router.get('/calendar', auth, [
   query('month').optional().isInt({ min: 1, max: 12 })
 ], validateRequest, async (req, res) => {
   try {
-    const { 
+    const {
       year = new Date().getFullYear(),
-      month 
+      month
     } = req.query;
-    
+
     let start, end;
-    
+
     if (month) {
       // Get specific month
       start = new Date(year, month - 1, 1);
@@ -348,7 +346,7 @@ router.get('/calendar', auth, [
       start = new Date(year, 0, 1);
       end = new Date(year, 11, 31);
     }
-    
+
     const calendarData = await DoseLog.aggregate([
       {
         $match: {
@@ -399,7 +397,7 @@ router.get('/calendar', auth, [
         $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 }
       }
     ]);
-    
+
     res.json({
       period: { start, end, year, month },
       calendarData
@@ -418,9 +416,9 @@ router.get('/trends', auth, [
 ], validateRequest, async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    
+
     let start = new Date();
-    
+
     switch (period) {
       case 'week':
         start.setDate(start.getDate() - 7);
@@ -435,7 +433,7 @@ router.get('/trends', auth, [
         start.setFullYear(start.getFullYear() - 1);
         break;
     }
-    
+
     // Get trends by time of day
     const timeOfDayTrends = await DoseLog.aggregate([
       {
@@ -469,7 +467,7 @@ router.get('/trends', auth, [
         $sort: { _id: 1 }
       }
     ]);
-    
+
     // Get trends by day of week
     const dayOfWeekTrends = await DoseLog.aggregate([
       {
@@ -516,17 +514,17 @@ router.get('/trends', auth, [
         $sort: { _id: 1 }
       }
     ]);
-    
+
     // Calculate streak information
     const recentDoses = await DoseLog.find({
       user: req.user._id,
       scheduledTime: { $gte: start }
     }).sort({ scheduledTime: -1 }).limit(30);
-    
+
     let currentStreak = 0;
     let longestStreak = 0;
     let tempStreak = 0;
-    
+
     const dailyAdherence = {};
     recentDoses.forEach(dose => {
       const dateKey = dose.scheduledTime.toISOString().split('T')[0];
@@ -538,9 +536,9 @@ router.get('/trends', auth, [
         dailyAdherence[dateKey].taken++;
       }
     });
-    
+
     const sortedDates = Object.keys(dailyAdherence).sort().reverse();
-    
+
     for (const date of sortedDates) {
       const adherenceRate = dailyAdherence[date].taken / dailyAdherence[date].total;
       if (adherenceRate >= 0.8) { // 80% or better considered a "good" day
@@ -556,7 +554,7 @@ router.get('/trends', auth, [
         tempStreak = 0;
       }
     }
-    
+
     res.json({
       period: { start, end: new Date(), type: period },
       timeOfDayTrends,
@@ -566,11 +564,11 @@ router.get('/trends', auth, [
         longestStreak
       },
       insights: {
-        bestTimeOfDay: timeOfDayTrends.reduce((best, current) => 
-          current.adherencePercentage > best.adherencePercentage ? current : best, 
+        bestTimeOfDay: timeOfDayTrends.reduce((best, current) =>
+          current.adherencePercentage > best.adherencePercentage ? current : best,
           { adherencePercentage: 0, _id: null }
         ),
-        bestDayOfWeek: dayOfWeekTrends.reduce((best, current) => 
+        bestDayOfWeek: dayOfWeekTrends.reduce((best, current) =>
           current.adherencePercentage > best.adherencePercentage ? current : best,
           { adherencePercentage: 0, dayName: null }
         )
@@ -590,7 +588,7 @@ router.get('/calendar-heatmap', auth, [
 ], validateRequest, async (req, res) => {
   try {
     let { year } = req.query;
-    
+
     // If no year provided, find the most recent year with data
     if (!year) {
       const latestYear = await DoseLog.aggregate([
@@ -599,13 +597,13 @@ router.get('/calendar-heatmap', auth, [
         { $sort: { _id: -1 } },
         { $limit: 1 }
       ]);
-      
+
       year = latestYear.length > 0 ? latestYear[0]._id : new Date().getFullYear();
     }
-    
+
     const startDate = new Date(`${year}-01-01`);
     const endDate = new Date(`${year}-12-31`);
-    
+
     // Get daily adherence data for the year
     const dailyAdherence = await DoseLog.aggregate([
       {
@@ -646,7 +644,7 @@ router.get('/calendar-heatmap', auth, [
         $sort: { date: 1 }
       }
     ]);
-    
+
     res.json(dailyAdherence);
   } catch (error) {
     console.error('Get calendar heatmap error:', error);
@@ -662,10 +660,10 @@ router.get('/weekly-trends', auth, [
 ], validateRequest, async (req, res) => {
   try {
     const { weeks = 12 } = req.query;
-    
+
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - (weeks * 7));
-    
+
     // Get weekly adherence data
     const weeklyData = await DoseLog.aggregate([
       {
@@ -704,7 +702,7 @@ router.get('/weekly-trends', auth, [
         $sort: { firstDayOfWeek: 1 }
       }
     ]);
-    
+
     res.json(weeklyData);
   } catch (error) {
     console.error('Get weekly trends error:', error);
@@ -719,7 +717,7 @@ router.get('/most-missed-medications', auth, async (req, res) => {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
+
     // Get medication miss rates
     const missedMedications = await DoseLog.aggregate([
       {
@@ -776,7 +774,7 @@ router.get('/most-missed-medications', auth, async (req, res) => {
           totalMissedAndSkipped: { $add: ['$missedDoses', '$skippedDoses'] },
           totalMissedPercentage: {
             $multiply: [
-              { $divide: [{ $add: ['$missedDoses', '$skippedDoses'] }, '$totalDoses'] }, 
+              { $divide: [{ $add: ['$missedDoses', '$skippedDoses'] }, '$totalDoses'] },
               100
             ]
           }
@@ -794,7 +792,7 @@ router.get('/most-missed-medications', auth, async (req, res) => {
         $limit: 10
       }
     ]);
-    
+
     res.json(missedMedications);
   } catch (error) {
     console.error('Get most missed medications error:', error);
@@ -811,7 +809,7 @@ router.get('/dose-logs/export', auth, [
   query('endDate').optional().isISO8601()
 ], validateRequest, async (req, res) => {
   try {
-    const { 
+    const {
       format,
       startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
       endDate = new Date()
@@ -825,10 +823,10 @@ router.get('/dose-logs/export', auth, [
       user: req.user._id,
       scheduledTime: { $gte: start, $lte: end }
     })
-    .populate('medication')
-    .populate('regimen')
-    .sort({ scheduledTime: -1 })
-    .limit(200);
+      .populate('medication')
+      .populate('regimen')
+      .sort({ scheduledTime: -1 })
+      .limit(200);
 
     if (format === 'pdf') {
       const pdfBuffer = await pdfService.generateDoseLogsReport({ doses });
@@ -890,7 +888,7 @@ router.get('/medication-list/export', auth, [
         const category = (med.category || '').replace(/"/g, '""');
         const form = (med.form || '').replace(/"/g, '""');
         const purpose = (med.purpose || '').replace(/"/g, '""');
-        
+
         csv += `"${name}","${genericName}","${strength}","${unit}","${category}","${form}","${purpose}"\n`;
       });
 
@@ -925,10 +923,10 @@ router.get('/missed-doses/export', auth, [
       status: 'missed',
       scheduledTime: { $gte: startDate }
     })
-    .populate('medication')
-    .populate('regimen')
-    .sort({ scheduledTime: -1 })
-    .limit(100);
+      .populate('medication')
+      .populate('regimen')
+      .sort({ scheduledTime: -1 })
+      .limit(100);
 
     if (format === 'pdf') {
       const pdfBuffer = await pdfService.generateMissedDosesReport({ missedDoses });
@@ -945,7 +943,7 @@ router.get('/missed-doses/export', auth, [
         const time = dose.scheduledTime.toISOString().split('T')[1].substring(0, 5);
         const minutesLate = dose.minutesLate || 0;
         const reason = (dose.notes || 'Not specified').replace(/"/g, '""');
-        
+
         csv += `"${date}","${medication}","${time}","${minutesLate}","${reason}"\n`;
       });
 

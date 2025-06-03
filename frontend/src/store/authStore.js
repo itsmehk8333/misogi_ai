@@ -40,10 +40,6 @@ const useAuthStore = create(
             error: null
           });
           
-          console.log('Registration successful - NOT storing in localStorage:', {
-            user: response.user?.email
-          });
-          
           return response;
         } catch (error) {
           set({
@@ -158,13 +154,7 @@ const useAuthStore = create(
       version: 1,
       // Handle storage failures gracefully
       onRehydrateStorage: () => (state) => {
-        if (state) {
-          console.log('Auth state rehydrated from localStorage:', {
-            isAuthenticated: state.isAuthenticated,
-            hasUser: !!state.user,
-            hasToken: !!state.token
-          });
-        }
+        // Silent rehydration - debug logging removed
       }
     }
   )

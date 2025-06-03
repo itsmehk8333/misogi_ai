@@ -1,5 +1,17 @@
 import { apiClient, handleApiResponse, handleApiError } from './api';
 
+// Calendar status cache for performance optimization
+let calendarStatusCache = {
+  data: null,
+  timestamp: null,
+  isValid: function() {
+    if (!this.data || !this.timestamp) return false;
+    const cacheAge = Date.now() - this.timestamp;
+    const CACHE_DURATION = 2 * 60 * 1000; // 2 minutes as recommended by backend
+    return cacheAge < CACHE_DURATION;
+  }
+};
+
 export const calendarService = {
   // Initialize Google Calendar integration
   initializeGoogleCalendar: async () => {
@@ -25,20 +37,39 @@ export const calendarService = {
   handleCallback: async (code) => {
     try {
       const response = await apiClient.post('/calendar/google/callback', { code });
+      // Clear cache after connection changes
+      calendarStatusCache.data = null;
+      calendarStatusCache.timestamp = null;
       return handleApiResponse(response);
     } catch (error) {
       throw handleApiError(error);
     }
   },
 
-  // Check calendar connection status
-  getConnectionStatus: async () => {
+  // Check calendar connection status (OPTIMIZED with caching)
+  getConnectionStatus: async (forceRefresh = false) => {
     try {
+      // Return cached data if valid and not forcing refresh
+      if (!forceRefresh && calendarStatusCache.isValid()) {
+        return calendarStatusCache.data;
+      }
+
       const response = await apiClient.get('/calendar/status');
-      return handleApiResponse(response);
+      const data = handleApiResponse(response);
+      
+      // Cache the response
+      calendarStatusCache.data = data;
+      calendarStatusCache.timestamp = Date.now();
+      
+      return data;
     } catch (error) {
       throw handleApiError(error);
     }
+  },
+  // Clear calendar status cache (useful after connection changes)
+  clearStatusCache: () => {
+    calendarStatusCache.data = null;
+    calendarStatusCache.timestamp = null;
   },
 
   // Sync medication schedule to Google Calendar

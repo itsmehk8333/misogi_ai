@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const memoryManager = require('./utils/memoryManager');
 require('dotenv').config();
@@ -20,10 +21,24 @@ const app = express();
 
 // Initialize memory monitoring
 memoryManager.startMonitoring();
-memoryManager.logMemoryUsage('server startup');
 
 // Security middleware
 app.use(helmet());
+
+// Response compression for better performance
+app.use(compression({
+  // Compress responses larger than 1KB
+  threshold: 1024,
+  // Use gzip compression
+  filter: (req, res) => {
+    // Don't compress responses with this request header
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    // Fallback to standard filter function
+    return compression.filter(req, res);
+  }
+}));
 
 // CORS configuration - allow multiple origins during development
 const allowedOrigins = [
@@ -62,7 +77,6 @@ app.use(cors({
 
 // Handle preflight requests explicitly
 app.options('*', (req, res) => {
-  console.log('🚀 Handling preflight OPTIONS request for:', req.path);
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
   res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,X-File-Name');
@@ -199,7 +213,6 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   
   // Initialize memory monitoring
-  memoryManager.logMemoryUsage('server startup');
   memoryManager.startMonitoring();
   
   // Start notification scheduler

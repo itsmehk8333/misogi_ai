@@ -1,6 +1,22 @@
 import api from './api';
 
 class RewardService {
+  // Get all user rewards data in one consolidated call (OPTIMIZED)
+  static async getAllUserRewardsConsolidated(userId) {
+    try {
+      // Use the new consolidated endpoint for maximum performance
+      const endpoint = userId ? `/rewards/consolidated/${userId}` : '/rewards/consolidated';
+      
+      const response = await api.get(endpoint);
+      
+      return response.data;
+    } catch (error) {
+      console.error('🚀 RewardService.getAllUserRewardsConsolidated error:', error);
+      console.error('🚀 Error response:', error.response?.data);
+      throw error.response?.data || { message: 'Failed to fetch consolidated rewards data' };
+    }
+  }
+
   // Get user rewards from backend
   static async getUserRewards(userId) {
     console.log('🌐 RewardService.getUserRewards called with userId:', userId);
@@ -321,6 +337,23 @@ class RewardService {
     }
 
     return suggestions;
+  }
+
+  // Performance testing method (admin/debug use)
+  static async testPerformance(userId) {
+    console.log('🔬 RewardService.testPerformance called with userId:', userId);
+    try {
+      const endpoint = userId ? `/rewards/performance-test/${userId}` : '/rewards/performance-test';
+      console.log('🔬 Making performance test API call to:', endpoint);
+      
+      const response = await api.get(endpoint);
+      console.log('🔬 Performance test results:', response.data);
+      
+      return response.data;
+    } catch (error) {
+      console.error('🔬 RewardService.testPerformance error:', error);
+      throw error.response?.data || { message: 'Failed to run performance test' };
+    }
   }
 }
 

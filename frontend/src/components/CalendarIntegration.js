@@ -23,14 +23,12 @@ const CalendarIntegration = () => {
   useEffect(() => {
     checkConnectionStatus();
   }, []);
-
-  const checkConnectionStatus = async () => {
+  const checkConnectionStatus = async (forceRefresh = false) => {
     try {
       setLoading(true);
-      const status = await calendarService.getConnectionStatus();
+      const status = await calendarService.getConnectionStatus(forceRefresh);
       setIsConnected(status.isConnected);
-      setConnectionInfo(status);
-      if (status.settings) {
+      setConnectionInfo(status);      if (status.settings) {
         setSettings(status.settings);
       }
     } catch (error) {
@@ -51,15 +49,14 @@ const CalendarIntegration = () => {
         authUrl,
         'googleCalendarAuth',
         'width=500,height=600,scrollbars=yes,resizable=yes'
-      );
-
-      // Listen for the callback
+      );      // Listen for the callback
       const checkClosed = setInterval(() => {
         if (popup.closed) {
           clearInterval(checkClosed);
           setConnecting(false);
-          // Check if connection was successful
-          setTimeout(checkConnectionStatus, 1000);
+          // Clear cache and force fresh status check after potential connection
+          calendarService.clearStatusCache();
+          setTimeout(() => checkConnectionStatus(true), 1000);
         }
       }, 1000);
 
@@ -71,8 +68,9 @@ const CalendarIntegration = () => {
           popup.close();
           setIsConnected(true);
           setAvailableCalendars(event.data.calendars || []);
+          calendarService.clearStatusCache(); // Clear cache after successful connection
           notificationService.showToast('success', 'Google Calendar connected successfully!');
-          checkConnectionStatus();
+          checkConnectionStatus(true); // Force refresh
         } else if (event.data.type === 'GOOGLE_CALENDAR_AUTH_ERROR') {
           popup.close();
           notificationService.showToast('error', 'Failed to connect Google Calendar');
